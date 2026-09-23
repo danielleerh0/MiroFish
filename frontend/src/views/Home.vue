@@ -11,36 +11,71 @@
     <main class="wrap">
       <!-- Hero -->
       <section class="hero">
-        <div>
-          <h1>Test a decision on a crowd before you make it</h1>
+        <div class="hero-text">
+          <h1>Rehearse a decision before you make it</h1>
           <p class="lede">
-            Give MiroFish a document and a question. It builds a crowd of AI characters from
-            the people and groups in that document, lets them react to each other, and writes
-            up what happened.
+            MiroFish turns your document into a simulated world of the people and
+            organisations it describes. You pose a question, run the scenario, and see how
+            each party is likely to respond, and what follows from that.
           </p>
-          <a href="#start" class="btn btn-main">Start a simulation</a>
+          <p class="lede lede-small">Use the results to test your judgement, not to replace it.</p>
+          <a href="#start" class="btn btn-main">Run a simulation</a>
         </div>
-        <div aria-hidden="true">
-          <svg ref="crowdSvg" class="crowd" viewBox="0 0 400 300"></svg>
-          <p class="crowd-caption">One crowd, two camps. MiroFish shows you where people split.</p>
-        </div>
+
+        <figure class="futures" aria-hidden="true">
+          <svg viewBox="0 0 440 320" class="futures-svg">
+            <!-- paths -->
+            <path
+              v-for="(p, i) in paths"
+              :key="'p' + i"
+              :d="p.d"
+              class="branch"
+              :class="{ risk: p.risk }"
+              :style="{ animationDelay: p.delay + 's' }"
+            />
+            <!-- moving pulses (loop) -->
+            <template v-if="motionOK">
+              <circle v-for="(p, i) in pulsePaths" :key="'m' + i" r="3.5" class="pulse" :class="{ risk: p.risk }">
+                <animateMotion :path="p.d" :dur="p.dur + 's'" :begin="(2.6 + p.offset) + 's'" repeatCount="indefinite" />
+              </circle>
+            </template>
+            <!-- nodes -->
+            <circle
+              v-for="(n, i) in nodes"
+              :key="'n' + i"
+              :cx="n.x" :cy="n.y" :r="n.r"
+              class="node"
+              :class="n.kind"
+              :style="{ animationDelay: n.delay + 's' }"
+            />
+          </svg>
+          <div class="futures-cols">
+            <span>Your decision</span>
+            <span>How each party responds</span>
+            <span>What follows</span>
+          </div>
+          <figcaption class="futures-caption">
+            <span class="key key-risk"></span> Knock-on effects you did not plan for
+          </figcaption>
+        </figure>
       </section>
 
       <!-- Start form + steps -->
       <section class="block start" id="start">
         <div class="steps-col">
-          <h2>How it works</h2>
+          <h2>How a simulation works</h2>
           <ol class="steps">
-            <li><div><h3>Share a document</h3><p>A report, news article or policy paper. PDF, Markdown or plain text.</p></div></li>
-            <li><div><h3>Ask a question</h3><p>Write it in plain words, like you would ask a colleague.</p></div></li>
-            <li><div><h3>MiroFish builds the crowd</h3><p>It finds the people, firms and groups in your document and gives each an AI character with its own view and memory.</p></div></li>
-            <li><div><h3>The crowd reacts</h3><p>The characters post, reply and argue on two simulated social platforms over many rounds.</p></div></li>
-            <li><div><h3>Read the report and ask follow-ups</h3><p>An AI analyst writes a report. You can then chat with the analyst or any single character.</p></div></li>
+            <li v-for="(s, i) in steps" :key="i" :ref="el => stepEls[i] = el" :class="{ seen: seen[i] }">
+              <div>
+                <h3>{{ s.title }}</h3>
+                <p>{{ s.body }}</p>
+              </div>
+            </li>
           </ol>
         </div>
 
         <div class="form-col">
-          <h2>Start a simulation</h2>
+          <h2>Run a simulation</h2>
           <div class="form-card">
             <label class="field-label">Your document</label>
             <div
@@ -62,7 +97,7 @@
               />
               <div v-if="files.length === 0" class="upload-empty">
                 <strong>Drop files here or click to choose</strong>
-                <span>PDF, MD or TXT. You can add more than one.</span>
+                <span>A policy paper, briefing, plan or news report. PDF, MD or TXT.</span>
               </div>
               <ul v-else class="file-list">
                 <li v-for="(file, index) in files" :key="index" class="file-item">
@@ -72,12 +107,12 @@
               </ul>
             </div>
 
-            <label class="field-label" for="question">Your question</label>
+            <label class="field-label" for="question">The decision you want to test</label>
             <textarea
               id="question"
               v-model="formData.simulationRequirement"
               class="question"
-              placeholder="Example: How will small logistics firms react if this grant ends next year?"
+              placeholder="Example: If we end this grant next year, how will small logistics firms, their customers and industry associations respond over six months?"
               rows="5"
               :disabled="loading"
             ></textarea>
@@ -88,35 +123,54 @@
               @click="startSimulation"
               :disabled="!canSubmit || loading"
             >
-              {{ loading ? 'Starting…' : 'Start simulation' }}
+              {{ loading ? 'Starting…' : 'Run simulation' }}
             </button>
-            <p class="hint" v-if="!canSubmit">Add a document and a question to start.</p>
+            <p class="hint" v-if="!canSubmit">Add a document and describe the decision to start.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- What you get -->
+      <section class="block">
+        <h2>What you get</h2>
+        <div class="gets">
+          <div class="get">
+            <h3>A report on likely responses</h3>
+            <p>How each party reacts, and the second-order effects that follow.</p>
+          </div>
+          <div class="get">
+            <h3>Where the parties disagree</h3>
+            <p>The points of friction, and the reasons each side gives.</p>
+          </div>
+          <div class="get">
+            <h3>A way to question the results</h3>
+            <p>Ask the analyst, or any simulated party, why it acted as it did.</p>
           </div>
         </div>
       </section>
 
       <!-- Fit -->
       <section class="block">
-        <h2>What it is good for</h2>
+        <h2>Use it to inform judgement</h2>
         <div class="fit">
           <div class="fit-card yes">
-            <h3>Use it to</h3>
+            <h3>Good for</h3>
             <ul>
-              <li>See how different groups may respond to the same change</li>
-              <li>Find reactions you did not expect</li>
-              <li>Test a message or plan before you release it</li>
+              <li>Testing a policy, plan or message before release</li>
+              <li>Finding reactions and knock-on effects you did not expect</li>
+              <li>Preparing better questions for real consultation</li>
             </ul>
           </div>
           <div class="fit-card no">
-            <h3>Do not use it to</h3>
+            <h3>Not for</h3>
             <ul>
-              <li>Predict exact numbers or outcomes</li>
-              <li>Replace human judgement or real consultation</li>
-              <li>Process sensitive or classified material. Your files go to an external AI service.</li>
+              <li>Exact forecasts or numbers</li>
+              <li>Replacing expert judgement or real consultation</li>
+              <li>Sensitive or classified material. Your files go to an external AI service.</li>
             </ul>
           </div>
         </div>
-        <p class="note">Each run uses paid AI services. A standard run costs about US$5. Leave the tab open while the crowd reacts.</p>
+        <p class="note">Each run uses paid AI services. A standard run costs about US$5. Leave the tab open while the simulation runs.</p>
       </section>
 
       <!-- History -->
@@ -128,7 +182,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import HistoryDatabase from '../components/HistoryDatabase.vue'
 import LanguageSwitcher from '../components/LanguageSwitcher.vue'
@@ -141,7 +195,6 @@ const loading = ref(false)
 const error = ref('')
 const isDragOver = ref(false)
 const fileInput = ref(null)
-const crowdSvg = ref(null)
 
 const canSubmit = computed(() => {
   return formData.value.simulationRequirement.trim() !== '' && files.value.length > 0
@@ -150,25 +203,20 @@ const canSubmit = computed(() => {
 const triggerFileInput = () => {
   if (!loading.value) fileInput.value?.click()
 }
-
 const handleFileSelect = (event) => {
   addFiles(Array.from(event.target.files))
 }
-
 const handleDragOver = () => {
   if (!loading.value) isDragOver.value = true
 }
-
 const handleDragLeave = () => {
   isDragOver.value = false
 }
-
 const handleDrop = (e) => {
   isDragOver.value = false
   if (loading.value) return
   addFiles(Array.from(e.dataTransfer.files))
 }
-
 const addFiles = (newFiles) => {
   const validFiles = newFiles.filter(file => {
     const ext = file.name.split('.').pop().toLowerCase()
@@ -176,11 +224,9 @@ const addFiles = (newFiles) => {
   })
   files.value.push(...validFiles)
 }
-
 const removeFile = (index) => {
   files.value.splice(index, 1)
 }
-
 const startSimulation = () => {
   if (!canSubmit.value || loading.value) return
   import('../store/pendingUpload.js').then(({ setPendingUpload }) => {
@@ -189,47 +235,69 @@ const startSimulation = () => {
   })
 }
 
-// Crowd graphic: dots start mixed, then drift into two camps once.
-onMounted(() => {
-  const svg = crowdSvg.value
-  if (!svg) return
-  const NS = 'http://www.w3.org/2000/svg'
-  const colours = ['#2E8B7A', '#C4553C', '#8A97A6']
-  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  let seed = 7
-  const rand = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646 }
-  const dots = []
-  for (let i = 0; i < 90; i++) {
-    const camp = i < 40 ? 0 : i < 80 ? 1 : 2
-    const start = { x: 40 + rand() * 320, y: 30 + rand() * 240 }
-    const cx = camp === 0 ? 110 : camp === 1 ? 290 : 200
-    const spreadX = camp === 2 ? 30 : 120
-    const spreadY = camp === 2 ? 200 : 150
-    const end = { x: cx + (rand() - 0.5) * spreadX, y: 150 + (rand() - 0.5) * spreadY }
-    const c = document.createElementNS(NS, 'circle')
-    c.setAttribute('r', 4.5)
-    c.setAttribute('fill', colours[camp])
-    svg.appendChild(c)
-    dots.push({ c, start, end })
-  }
-  const place = (t) => {
-    const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
-    for (const d of dots) {
-      d.c.setAttribute('cx', d.start.x + (d.end.x - d.start.x) * e)
-      d.c.setAttribute('cy', d.start.y + (d.end.y - d.start.y) * e)
-    }
-  }
-  if (reduce) { place(1); return }
-  place(0)
-  let t0 = null
-  const step = (ts) => {
-    if (t0 === null) t0 = ts
-    const t = Math.min(Math.max((ts - t0 - 600) / 2400, 0), 1)
-    place(t)
-    if (t < 1) requestAnimationFrame(step)
-  }
-  requestAnimationFrame(step)
+// ---- Hero graphic: one decision branching into responses and outcomes ----
+const motionOK = ref(false)
+const root = { x: 40, y: 160 }
+const mids = [{ x: 200, y: 70 }, { x: 200, y: 160 }, { x: 200, y: 250 }]
+const ends = [
+  { x: 390, y: 30 }, { x: 390, y: 100 },
+  { x: 390, y: 135 }, { x: 390, y: 185, risk: true },
+  { x: 390, y: 220 }, { x: 390, y: 290 }
+]
+const curve = (a, b) => {
+  const mx = (a.x + b.x) / 2
+  return `M${a.x},${a.y} C${mx},${a.y} ${mx},${b.y} ${b.x},${b.y}`
+}
+const paths = [
+  ...mids.map((m, i) => ({ d: curve(root, m), delay: 0.3 + i * 0.15, risk: false })),
+  ...ends.map((e, i) => ({ d: curve(mids[Math.floor(i / 2)], e), delay: 1.0 + i * 0.12, risk: !!e.risk }))
+]
+// full journeys root -> mid -> end, for the looping pulses
+const pulsePaths = ends.map((e, i) => {
+  const m = mids[Math.floor(i / 2)]
+  const first = curve(root, m)
+  const second = curve(m, e).replace(/^M[^C]+/, '')
+  return { d: first + ' ' + second, dur: 3.2 + (i % 3) * 0.5, offset: i * 0.55, risk: !!e.risk }
 })
+const nodes = [
+  { ...root, r: 9, kind: 'root', delay: 0.1 },
+  ...mids.map((m, i) => ({ ...m, r: 7, kind: 'mid', delay: 0.8 + i * 0.15 })),
+  ...ends.map((e, i) => ({ ...e, r: e.risk ? 7 : 5.5, kind: e.risk ? 'end risk' : 'end', delay: 1.6 + i * 0.12 }))
+]
+
+// ---- Steps light up in sequence as they scroll into view ----
+const steps = [
+  { title: 'Share a document', body: 'A policy paper, briefing, plan or news report that describes the situation.' },
+  { title: 'Describe the decision', body: 'Say what you plan to do, and what you want to know about the response.' },
+  { title: 'MiroFish maps the parties', body: 'It finds the people, firms and groups in your document and builds a simulated version of each, with its own interests and memory.' },
+  { title: 'The scenario plays out', body: 'The parties react to your decision and to each other over many rounds. You can watch this happen.' },
+  { title: 'Review, then question', body: 'An AI analyst writes up what happened. You can ask the analyst, or any single party, to explain its actions.' }
+]
+const stepEls = ref([])
+const seen = ref(steps.map(() => false))
+let observer = null
+
+onMounted(() => {
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  motionOK.value = !reduce
+  if (reduce || !('IntersectionObserver' in window)) {
+    seen.value = steps.map(() => true)
+    return
+  }
+  observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        const i = stepEls.value.indexOf(entry.target)
+        if (i > -1) {
+          setTimeout(() => { seen.value[i] = true }, i * 120)
+          observer.unobserve(entry.target)
+        }
+      }
+    })
+  }, { threshold: 0.6 })
+  stepEls.value.forEach(el => el && observer.observe(el))
+})
+onBeforeUnmount(() => observer && observer.disconnect())
 </script>
 
 <style scoped>
@@ -239,7 +307,8 @@ onMounted(() => {
   --ink: #1B2A3A;
   --muted: #56667A;
   --line: #CDD5DE;
-  --green: #2E8B7A;
+  --teal: #2E8B7A;
+  --amber: #C9822B;
   --red: #C4553C;
   min-height: 100vh;
   background: var(--paper);
@@ -248,12 +317,9 @@ onMounted(() => {
   font-size: 1.0625rem;
   line-height: 1.6;
 }
-.home :focus-visible { outline: 3px solid var(--green); outline-offset: 3px; }
+.home :focus-visible { outline: 3px solid var(--teal); outline-offset: 3px; }
 
-.nav {
-  display: flex; justify-content: space-between; align-items: center;
-  max-width: 1040px; margin: 0 auto; padding: 20px 24px;
-}
+.nav { display: flex; justify-content: space-between; align-items: center; max-width: 1040px; margin: 0 auto; padding: 20px 24px; }
 .brand { font-weight: 800; font-size: 1.25rem; letter-spacing: -0.01em; }
 .nav-right { display: flex; align-items: center; gap: 20px; }
 .nav-link { color: var(--muted); text-decoration: none; font-size: 0.95rem; }
@@ -261,38 +327,81 @@ onMounted(() => {
 
 .wrap { max-width: 1040px; margin: 0 auto; padding: 0 24px 64px; }
 
-.hero { display: grid; grid-template-columns: 1.1fr 1fr; gap: 48px; align-items: center; padding: 48px 0 56px; }
-.hero h1 { font-size: clamp(2.2rem, 5vw, 3.4rem); line-height: 1.08; font-weight: 800; letter-spacing: -0.02em; margin: 0 0 20px; max-width: 14ch; }
-.lede { color: var(--muted); max-width: 46ch; margin: 0 0 28px; font-size: 1.15rem; }
-.crowd { width: 100%; height: auto; display: block; }
-.crowd-caption { font-size: 0.875rem; color: var(--muted); margin: 8px 0 0; text-align: center; }
+/* Hero */
+.hero { display: grid; grid-template-columns: 1fr 1.05fr; gap: 48px; align-items: center; padding: 48px 0 56px; }
+.hero h1 { font-size: clamp(2.2rem, 5vw, 3.4rem); line-height: 1.08; font-weight: 800; letter-spacing: -0.02em; margin: 0 0 20px; max-width: 13ch; }
+.lede { color: var(--muted); max-width: 46ch; margin: 0 0 16px; font-size: 1.15rem; }
+.lede-small { font-size: 1rem; color: var(--ink); margin-bottom: 28px; }
+.hero-text > * { animation: rise 0.7s ease-out both; }
+.hero-text > *:nth-child(2) { animation-delay: 0.08s; }
+.hero-text > *:nth-child(3) { animation-delay: 0.16s; }
+.hero-text > *:nth-child(4) { animation-delay: 0.24s; }
+@keyframes rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
 
-.btn { display: inline-block; padding: 14px 24px; border-radius: 6px; font-weight: 700; font-size: 1rem; text-decoration: none; border: 0; cursor: pointer; font-family: inherit; }
+.futures { margin: 0; }
+.futures-svg { width: 100%; height: auto; display: block; overflow: visible; }
+.branch {
+  fill: none; stroke: var(--teal); stroke-width: 2; opacity: 0.55;
+  stroke-dasharray: 400; stroke-dashoffset: 400;
+  animation: draw 1s ease-out forwards;
+}
+.branch.risk { stroke: var(--amber); opacity: 0.9; stroke-width: 2.5; }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+.node { transform-box: fill-box; transform-origin: center; transform: scale(0); animation: pop 0.45s cubic-bezier(.3,1.6,.5,1) forwards; }
+.node.root { fill: var(--ink); }
+.node.mid { fill: var(--card); stroke: var(--teal); stroke-width: 2.5; }
+.node.end { fill: var(--teal); }
+.node.end.risk { fill: var(--amber); animation: pop 0.45s cubic-bezier(.3,1.6,.5,1) forwards, glow 2.4s ease-in-out 2.4s infinite; }
+@keyframes pop { to { transform: scale(1); } }
+@keyframes glow { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.35); } }
+.pulse { fill: var(--teal); }
+.pulse.risk { fill: var(--amber); }
+.futures-cols { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--muted); margin-top: 10px; }
+.futures-cols span:nth-child(2) { text-align: center; }
+.futures-cols span:last-child { text-align: right; }
+.futures-caption { display: flex; align-items: center; gap: 8px; justify-content: center; font-size: 0.875rem; color: var(--muted); margin-top: 14px; }
+.key { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.key-risk { background: var(--amber); }
+
+/* Buttons */
+.btn { display: inline-block; padding: 14px 24px; border-radius: 6px; font-weight: 700; font-size: 1rem; text-decoration: none; border: 0; cursor: pointer; font-family: inherit; transition: background 0.2s; }
 .btn-main { background: var(--ink); color: #fff; }
-.btn-main:hover:not(:disabled) { background: var(--green); }
+.btn-main:hover:not(:disabled) { background: var(--teal); }
 .btn-main:disabled { background: #C9D1DA; color: #6B7A8A; cursor: not-allowed; }
 .btn-full { width: 100%; margin-top: 20px; }
 
+/* Blocks */
 .block { padding: 48px 0; border-top: 1px solid var(--line); }
 .block h2 { font-size: 1.6rem; line-height: 1.2; margin: 0 0 24px; font-weight: 800; letter-spacing: -0.01em; }
 
+/* Steps */
 .start { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: start; }
-.steps { list-style: none; margin: 0; padding: 0; counter-reset: step; }
-.steps li { counter-increment: step; display: grid; grid-template-columns: 44px 1fr; gap: 12px; padding: 16px 0; border-bottom: 1px solid var(--line); }
-.steps li:last-child { border-bottom: 0; }
-.steps li::before { content: counter(step); font-size: 1.5rem; font-weight: 800; color: var(--green); line-height: 1.1; }
-.steps h3 { margin: 0 0 4px; font-size: 1.05rem; }
+.steps { list-style: none; margin: 0; padding: 0; counter-reset: step; position: relative; }
+.steps li { counter-increment: step; display: grid; grid-template-columns: 44px 1fr; gap: 14px; padding: 14px 0; position: relative; }
+.steps li::before {
+  content: counter(step);
+  width: 32px; height: 32px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: 0.95rem;
+  border: 2px solid var(--line); color: var(--muted); background: var(--paper);
+  transition: background 0.4s, border-color 0.4s, color 0.4s;
+  position: relative; z-index: 1;
+}
+.steps li:not(:last-child)::after {
+  content: ''; position: absolute; left: 15px; top: 46px; bottom: -14px; width: 2px;
+  background: var(--line);
+}
+.steps li.seen::before { background: var(--teal); border-color: var(--teal); color: #fff; }
+.steps li.seen:not(:last-child)::after { background: linear-gradient(var(--teal), var(--line)); }
+.steps h3 { margin: 4px 0 4px; font-size: 1.05rem; }
 .steps p { margin: 0; color: var(--muted); font-size: 0.975rem; }
 
+/* Form */
 .form-card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 24px; }
 .field-label { display: block; font-weight: 700; font-size: 0.95rem; margin: 0 0 8px; }
 .field-label + .upload-zone { margin-bottom: 20px; }
-.upload-zone {
-  border: 2px dashed var(--line); border-radius: 6px; min-height: 140px;
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; background: var(--paper); padding: 16px;
-}
-.upload-zone:hover, .upload-zone.drag-over { border-color: var(--green); }
+.upload-zone { border: 2px dashed var(--line); border-radius: 6px; min-height: 140px; display: flex; align-items: center; justify-content: center; cursor: pointer; background: var(--paper); padding: 16px; transition: border-color 0.2s; }
+.upload-zone:hover, .upload-zone.drag-over { border-color: var(--teal); }
 .upload-zone.has-files { align-items: flex-start; }
 .upload-empty { text-align: center; display: flex; flex-direction: column; gap: 4px; }
 .upload-empty span { color: var(--muted); font-size: 0.9rem; }
@@ -300,25 +409,36 @@ onMounted(() => {
 .file-item { display: flex; align-items: center; gap: 12px; background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 8px 12px; font-size: 0.925rem; }
 .file-name { flex: 1; overflow-wrap: anywhere; }
 .remove-btn { background: none; border: 0; color: var(--red); cursor: pointer; font-family: inherit; font-size: 0.875rem; }
-.question {
-  width: 100%; border: 1px solid var(--line); border-radius: 6px; background: var(--paper);
-  padding: 14px; font-family: inherit; font-size: 1rem; line-height: 1.5; resize: vertical; color: var(--ink);
-}
-.question:focus { outline: 2px solid var(--green); outline-offset: 1px; }
+.question { width: 100%; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); padding: 14px; font-family: inherit; font-size: 1rem; line-height: 1.5; resize: vertical; color: var(--ink); }
+.question:focus { outline: 2px solid var(--teal); outline-offset: 1px; }
 .hint { color: var(--muted); font-size: 0.875rem; margin: 10px 0 0; text-align: center; }
 
+/* What you get */
+.gets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; }
+.get { border-top: 3px solid var(--teal); padding-top: 16px; }
+.get h3 { margin: 0 0 6px; font-size: 1.05rem; }
+.get p { margin: 0; color: var(--muted); font-size: 0.975rem; }
+
+/* Fit */
 .fit { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
 .fit-card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 24px; }
 .fit-card h3 { margin: 0 0 12px; font-size: 1.1rem; }
-.fit-card.yes h3 { color: var(--green); }
+.fit-card.yes h3 { color: var(--teal); }
 .fit-card.no h3 { color: var(--red); }
 .fit-card ul { margin: 0; padding-left: 20px; }
 .fit-card li { margin-bottom: 8px; }
 .note { color: var(--muted); margin: 24px 0 0; max-width: 62ch; }
 
 @media (max-width: 820px) {
-  .hero, .start, .fit { grid-template-columns: 1fr; }
-  .hero { padding: 24px 0 40px; gap: 24px; }
+  .hero, .start, .fit, .gets { grid-template-columns: 1fr; }
+  .hero { padding: 24px 0 40px; gap: 32px; }
   .nav-right { gap: 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-text > *, .branch, .node, .node.end.risk { animation: none; }
+  .branch { stroke-dashoffset: 0; }
+  .node { transform: none; }
+  .steps li::before { transition: none; }
 }
 </style>
