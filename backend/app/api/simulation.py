@@ -1512,6 +1512,12 @@ def start_simulation():
             "force": false                         // 可选: 强制重新开始（会停止运行中的模拟并清理日志）
         }
 
+    关于幂等与接管（adopt）：
+        - 未指定 force 时，本接口不会改动已有的运行：
+          进行中的运行或已结束（完成/停止/失败）的运行都会原样返回，
+          并附带 "adopted": true。仅刚准备完成（READY）的模拟会开始新的运行。
+        - 页面加载/刷新不应触发重启；只有用户明确确认后才应传 force=true。
+
     关于 force 参数：
         - 启用后，如果模拟正在运行或已完成，会先停止并清理运行日志
         - 清理的内容包括：run_state.json, actions.jsonl, simulation.log 等
@@ -1596,7 +1602,25 @@ def start_simulation():
             }), 404
 
         force_restarted = False
-        
+
+        # Adopt, never restart. Without an explicit ``force`` a start request
+        # must not disturb an existing run: an active run is returned as-is
+        # and a finished (completed / stopped / failed) run keeps its results.
+        # Only a freshly prepared simulation (READY) may begin a new run.
+        if not force and state.status != SimulationStatus.READY:
+            existing_run = SimulationRunner.reconcile_run_state(simulation_id)
+            if (
+                existing_run is not None
+                and existing_run.runner_status != RunnerStatus.IDLE
+            ):
+                adopted = existing_run.to_dict()
+                adopted['adopted'] = True
+                adopted['force_restarted'] = False
+                return jsonify({
+                    "success": True,
+                    "data": adopted
+                })
+
         # 智能处理状态：如果准备工作已完成，允许重新启动
         if state.status != SimulationStatus.READY:
             # 检查准备工作是否已完成
@@ -1762,6 +1786,7 @@ def start_simulation():
             response_data['max_rounds_applied'] = max_rounds
         response_data['graph_memory_update_enabled'] = enable_graph_memory_update
         response_data['force_restarted'] = force_restarted
+        response_data['adopted'] = False
         if enable_graph_memory_update:
             response_data['graph_id'] = graph_id
         
@@ -1889,7 +1914,7 @@ def get_run_status(simulation_id: str):
         }
     """
     try:
-        run_state = SimulationRunner.get_run_state(simulation_id)
+        run_state = SimulationRunner.reconcile_run_state(simulation_id)
         
         if not run_state:
             return jsonify({

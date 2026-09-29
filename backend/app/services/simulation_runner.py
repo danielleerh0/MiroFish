@@ -148,6 +148,9 @@ class SimulationRunState:
     
     # 错误信息
     error: Optional[str] = None
+    # Stable machine-readable failure reason (e.g. SIMULATION_WORKER_LOST);
+    # clients map it to localized text instead of parsing ``error``.
+    error_code: Optional[str] = None
     
     # 进程ID（用于停止）
     process_pid: Optional[int] = None
@@ -190,6 +193,7 @@ class SimulationRunState:
             "updated_at": self.updated_at,
             "completed_at": self.completed_at,
             "error": self.error,
+            "error_code": self.error_code,
             "process_pid": self.process_pid,
         }
     
@@ -296,7 +300,77 @@ class SimulationRunner:
         if state:
             cls._run_states[simulation_id] = state
         return state
-    
+
+    WORKER_LOST_ERROR_CODE = "SIMULATION_WORKER_LOST"
+    WORKER_LOST_MESSAGE = (
+        "The simulation process stopped unexpectedly. "
+        "Completed work has been preserved."
+    )
+
+    @staticmethod
+    def _pid_is_alive(pid: Optional[int]) -> bool:
+        """Best-effort liveness probe. Unverifiable cases count as alive."""
+        if not pid:
+            return False
+        if IS_WINDOWS:
+            # os.kill(pid, 0) would send CTRL_C_EVENT on Windows.
+            return True
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except OSError:
+            return False
+        return True
+
+    @classmethod
+    def reconcile_run_state(cls, simulation_id: str) -> Optional[SimulationRunState]:
+        """
+        Return the run state, demoting a phantom run to FAILED.
+
+        A persisted RUNNING/PAUSED state whose process this API instance does
+        not own and whose pid no longer exists can never finish on its own
+        (the process died with, or after, a previous API instance). Left
+        alone it would report "running" forever. Only states with a recorded
+        pid are demoted; STARTING/STOPPING are owned by in-flight requests
+        and the finalization barrier and are never touched here.
+        """
+        with cls._finalization_lock(simulation_id):
+            state = cls.get_run_state(simulation_id)
+            if state is None:
+                return None
+            if state.runner_status not in {
+                RunnerStatus.RUNNING,
+                RunnerStatus.PAUSED,
+            }:
+                return state
+            if cls._processes.get(simulation_id) is not None:
+                return state
+            if ZepGraphMemoryManager.get_updater(simulation_id) is not None:
+                return state
+            if not state.process_pid or cls._pid_is_alive(state.process_pid):
+                return state
+
+            logger.error(
+                "运行记录显示进行中但进程已不存在，标记为失败: "
+                "simulation_id=%s, pid=%s",
+                simulation_id,
+                state.process_pid,
+            )
+            state.runner_status = RunnerStatus.FAILED
+            state.twitter_running = False
+            state.reddit_running = False
+            state.error = cls.WORKER_LOST_MESSAGE
+            state.error_code = cls.WORKER_LOST_ERROR_CODE
+            state.completed_at = datetime.now().isoformat()
+            cls._save_run_state(state)
+            cls._sync_simulation_status(
+                simulation_id, RunnerStatus.FAILED, state.error
+            )
+            return state
+
     @classmethod
     def _load_run_state(cls, simulation_id: str) -> Optional[SimulationRunState]:
         """从文件加载运行状态"""
@@ -330,6 +404,7 @@ class SimulationRunner:
                 updated_at=data.get("updated_at", datetime.now().isoformat()),
                 completed_at=data.get("completed_at"),
                 error=data.get("error"),
+                error_code=data.get("error_code"),
                 process_pid=data.get("process_pid"),
             )
             

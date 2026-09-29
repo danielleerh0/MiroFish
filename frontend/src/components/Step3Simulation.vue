@@ -91,9 +91,32 @@
       </div>
 
       <div class="action-controls">
+        <button
+          v-if="phase === 0 && !isStarting && !isAttaching"
+          class="action-btn primary"
+          @click="handleRunClick"
+        >
+          {{ $t('step3.runBtn') }}
+        </button>
+        <button
+          v-if="phase === 1"
+          class="action-btn"
+          :disabled="isStopping"
+          @click="handleCancelClick"
+        >
+          {{ $t('step3.cancelBtn') }}
+        </button>
+        <button
+          v-if="phase === 2"
+          class="action-btn"
+          :disabled="isStarting || isGeneratingReport"
+          @click="handleRestartClick"
+        >
+          {{ $t('step3.runAgainBtn') }}
+        </button>
         <button 
           class="action-btn primary"
-          :disabled="phase !== 2 || isGeneratingReport"
+          :disabled="phase !== 2 || runStatus.runner_status === 'failed' || isGeneratingReport"
           @click="handleNextStep"
         >
           <span v-if="isGeneratingReport" class="loading-spinner-small"></span>
@@ -101,6 +124,16 @@
           <span v-if="!isGeneratingReport" class="arrow-icon">→</span>
         </button>
       </div>
+    </div>
+
+    <!-- Run state notice: the run lives on the server, this page only observes it -->
+    <div v-if="runNotice" class="run-notice" :class="runNotice.kind" role="status">
+      <div class="run-notice-title">{{ runNotice.title }}</div>
+      <div v-if="runNotice.message" class="run-notice-message">{{ runNotice.message }}</div>
+      <details v-if="runNotice.technical" class="run-notice-details">
+        <summary>{{ $t('step3.technicalDetails') }}</summary>
+        <pre>{{ runNotice.technical }}</pre>
+      </details>
     </div>
 
     <!-- Main Content: Dual Timeline -->
@@ -287,7 +320,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
   startSimulation,
@@ -296,6 +329,11 @@ import {
   getRunStatusDetail
 } from '../api/simulation'
 import { generateReport } from '../api/report'
+import {
+  decideEntryAction,
+  buildStartParams,
+  failureMessageKey
+} from '../utils/runLifecycle'
 
 const { t } = useI18n()
 
@@ -314,11 +352,13 @@ const props = defineProps({
 const emit = defineEmits(['go-back', 'next-step', 'add-log', 'update-status'])
 
 const router = useRouter()
+const route = useRoute()
 
 // State
 const isGeneratingReport = ref(false)
 const phase = ref(0) // 0: 未开始, 1: 运行中, 2: 已完成
 const isStarting = ref(false)
+const isAttaching = ref(true) // asking the server what state this run is in
 const isStopping = ref(false)
 const startError = ref(null)
 const runStatus = ref({})
@@ -360,6 +400,31 @@ const redditElapsedTime = computed(() => {
   return formatElapsedTime(runStatus.value.reddit_current_round || 0)
 })
 
+// What the server says about this run, in plain language.
+const runNotice = computed(() => {
+  if (startError.value) {
+    return { kind: 'error', title: t('step3.startErrorTitle'), message: startError.value }
+  }
+  if (isAttaching.value) return null
+  const status = runStatus.value.runner_status
+  if (status === 'failed') {
+    const key = failureMessageKey(runStatus.value.error_code)
+    return {
+      kind: 'error',
+      title: t('step3.runFailedTitle'),
+      message: key ? t(key) : t('step3.runFailedGeneric'),
+      technical: runStatus.value.error || null
+    }
+  }
+  if (phase.value === 1) {
+    return { kind: 'info', title: t('step3.runningTitle'), message: t('step3.leaveNote') }
+  }
+  if (phase.value === 0) {
+    return { kind: 'info', title: t('step3.notRunTitle'), message: t('step3.notRunMessage') }
+  }
+  return null
+})
+
 // Methods
 const addLog = (msg) => {
   emit('add-log', msg)
@@ -379,53 +444,74 @@ const resetAllState = () => {
   stopPolling()  // 停止之前可能存在的轮询
 }
 
-// 启动模拟
-const doStartSimulation = async () => {
+// Reflect the server's run state in the UI. The run itself is owned by the
+// server; this only decides what to show and whether to keep polling.
+const applyServerRun = (data) => {
+  runStatus.value = data
+  const action = decideEntryAction({ runnerStatus: data.runner_status })
+
+  if (action === 'adopt') {
+    phase.value = 1
+    emit('update-status', 'processing')
+    stopPolling()
+    startStatusPolling()
+    startDetailPolling()
+    fetchRunStatusDetail()
+  } else if (action === 'show_result') {
+    phase.value = 2
+    emit('update-status', 'completed')
+    fetchRunStatusDetail()
+  } else if (action === 'show_failure') {
+    phase.value = 2
+    emit('update-status', 'error')
+    addLog(t('log.simFailed') + (data.error ? `: ${data.error}` : ''))
+    fetchRunStatusDetail()
+  }
+  return action
+}
+
+// Ask the server to start (or, without force, to hand back the existing run).
+// ``force`` is only ever true after an explicit, confirmed user action.
+const doStartSimulation = async ({ force = false } = {}) => {
   if (!props.simulationId) {
     addLog(t('log.errorMissingSimId'))
     return
   }
 
-  // 先重置所有状态，确保不会受到上一次模拟的影响
-  resetAllState()
-  
+  // Only a confirmed restart discards what is on screen; a plain start keeps it.
+  if (force) resetAllState()
+
   isStarting.value = true
   startError.value = null
   addLog(t('log.startingDualSim'))
   emit('update-status', 'processing')
-  
+
   try {
-    const params = {
-      simulation_id: props.simulationId,
-      platform: 'parallel',
-      force: true,  // 强制重新开始
-      enable_graph_memory_update: true  // 开启动态图谱更新
-    }
-    
+    const params = buildStartParams({
+      simulationId: props.simulationId,
+      maxRounds: props.maxRounds,
+      force
+    })
     if (props.maxRounds) {
-      params.max_rounds = props.maxRounds
       addLog(t('log.setMaxRounds', { rounds: props.maxRounds }))
     }
-    
     addLog(t('log.graphMemoryUpdateEnabled'))
-    
+
     const res = await startSimulation(params)
-    
+
     if (res.success && res.data) {
-      if (res.data.force_restarted) {
-        addLog(t('log.oldSimCleared'))
+      if (res.data.adopted) {
+        addLog(t('log.runAdopted'))
+      } else {
+        if (res.data.force_restarted) {
+          addLog(t('log.oldSimCleared'))
+        }
+        addLog(t('log.engineStarted'))
       }
-      addLog(t('log.engineStarted'))
-      addLog(`  ├─ PID: ${res.data.process_pid || '-'}`)
-      
-      phase.value = 1
-      runStatus.value = res.data
-      
-      startStatusPolling()
-      startDetailPolling()
+      applyServerRun(res.data)
     } else {
-      startError.value = res.error || '启动失败'
-      addLog(t('log.startFailed', { error: res.error || t('common.unknownError') }))
+      startError.value = res.error || t('common.unknownError')
+      addLog(t('log.startFailed', { error: startError.value }))
       emit('update-status', 'error')
     }
   } catch (err) {
@@ -435,6 +521,59 @@ const doStartSimulation = async () => {
   } finally {
     isStarting.value = false
   }
+}
+
+// On open: look at the server's run, do not start one. The only implicit start
+// is the one carrying the launch flag set by the "Run" action in the previous step.
+const attachToRun = async () => {
+  isAttaching.value = true
+  try {
+    const res = await getRunStatus(props.simulationId)
+    const data = res.data || {}
+    const launchRequested = route.query.launch === '1'
+    const action = decideEntryAction({
+      runnerStatus: data.runner_status,
+      launchRequested
+    })
+
+    if (action === 'start') {
+      isAttaching.value = false
+      await consumeLaunchFlag()
+      await doStartSimulation()
+    } else if (action === 'offer_start') {
+      runStatus.value = data
+      phase.value = 0
+      emit('update-status', 'idle')
+    } else {
+      if (action === 'adopt') addLog(t('log.runAdopted'))
+      if (launchRequested) await consumeLaunchFlag()
+      applyServerRun(data)
+    }
+  } catch (err) {
+    startError.value = err.message
+    addLog(t('log.startException', { error: err.message }))
+    emit('update-status', 'error')
+  } finally {
+    isAttaching.value = false
+  }
+}
+
+// The launch flag is single-use: strip it so a refresh cannot re-trigger a start.
+const consumeLaunchFlag = async () => {
+  const { launch, ...rest } = route.query
+  await router.replace({ query: rest })
+}
+
+const handleRunClick = () => doStartSimulation()
+
+const handleRestartClick = () => {
+  if (!window.confirm(t('step3.confirmRestart'))) return
+  doStartSimulation({ force: true })
+}
+
+const handleCancelClick = () => {
+  if (!window.confirm(t('step3.confirmCancel'))) return
+  handleStopSimulation()
 }
 
 // 停止模拟
@@ -451,6 +590,7 @@ const handleStopSimulation = async () => {
       addLog(t('log.simStoppedSuccess'))
       phase.value = 2
       stopPolling()
+      runStatus.value = res.data || runStatus.value
       emit('update-status', 'completed')
     } else {
       addLog(t('log.stopFailed', { error: res.error || t('common.unknownError') }))
@@ -691,7 +831,9 @@ watch(() => props.systemLogs?.length, () => {
 onMounted(() => {
   addLog(t('log.step3Init'))
   if (props.simulationId) {
-    doStartSimulation()
+    attachToRun()
+  } else {
+    isAttaching.value = false
   }
 })
 
@@ -888,9 +1030,16 @@ onUnmounted(() => {
   letter-spacing: 0.05em;
 }
 
+.action-btn {
+  background: #FFF;
+  color: #000;
+  border: 1px solid #CCC;
+}
+
 .action-btn.primary {
   background: #000;
   color: #FFF;
+  border: none;
 }
 
 .action-btn.primary:hover:not(:disabled) {
@@ -900,6 +1049,26 @@ onUnmounted(() => {
 .action-btn:disabled {
   opacity: 0.3;
   cursor: not-allowed;
+}
+
+/* --- Run notice --- */
+.run-notice {
+  padding: 12px 24px;
+  border-bottom: 1px solid #EAEAEA;
+  background: #F7F7F7;
+  font-size: 13px;
+}
+.run-notice.error { background: #FDF2F0; border-bottom-color: #F3C9C2; }
+.run-notice-title { font-weight: 600; }
+.run-notice-message { margin-top: 2px; color: #555; }
+.run-notice-details { margin-top: 6px; color: #555; }
+.run-notice-details summary { cursor: pointer; }
+.run-notice-details pre {
+  margin: 6px 0 0;
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 11px;
 }
 
 /* --- Main Content Area --- */

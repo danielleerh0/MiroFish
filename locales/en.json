@@ -177,6 +177,20 @@
     "generating": "Generating"
   },
   "step3": {
+    "runBtn": "Run scenario",
+    "cancelBtn": "Cancel run",
+    "runAgainBtn": "Run again…",
+    "confirmRestart": "Run again? This replaces the results of the previous run for this simulation.",
+    "confirmCancel": "Cancel the running simulation? Results produced so far are kept.",
+    "runningTitle": "Running on the server",
+    "leaveNote": "You can leave this page or close the browser. The run continues, and you can return to it later.",
+    "notRunTitle": "Not run yet",
+    "notRunMessage": "Nothing has been run for this simulation. Press “Run scenario” to start.",
+    "runFailedTitle": "Run failed",
+    "runFailedGeneric": "The simulation stopped with an error. Completed work has been preserved.",
+    "workerLost": "The simulation process stopped unexpectedly. Completed work has been preserved.",
+    "startErrorTitle": "Could not read or start the run",
+    "technicalDetails": "Technical details",
     "startGenerateReport": "Generate Report",
     "generatingReport": "Starting...",
     "waitingForActions": "Waiting for agent actions...",
@@ -453,6 +467,8 @@
     "preparingScripts": "Preparing Scripts"
   },
   "log": {
+    "runContinuesOnServer": "This run continues on the server. Return to this page any time to view it.",
+    "runAdopted": "Reconnected to the existing run",
     "preparingGoBack": "Preparing to return to Step 2, closing simulation...",
     "closingSimEnv": "Closing simulation environment...",
     "simEnvClosed": "✓ Simulation environment closed",

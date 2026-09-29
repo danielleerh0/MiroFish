@@ -166,9 +166,11 @@ const handleNextStep = (params = {}) => {
     params: { simulationId: currentSimulationId.value }
   }
   
+  // launch=1 is the user's explicit "run" signal; the run page consumes it once.
+  routeParams.query = { launch: '1' }
   // 如果有自定义轮数，通过 query 参数传递
   if (params.maxRounds) {
-    routeParams.query = { maxRounds: params.maxRounds }
+    routeParams.query.maxRounds = params.maxRounds
   }
   
   // 跳转到 Step 3 页面

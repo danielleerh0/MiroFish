@@ -177,6 +177,20 @@
     "generating": "生成中"
   },
   "step3": {
+    "runBtn": "运行模拟",
+    "cancelBtn": "取消运行",
+    "runAgainBtn": "重新运行…",
+    "confirmRestart": "确定重新运行？这将替换此模拟上一次运行的结果。",
+    "confirmCancel": "确定取消正在运行的模拟？已产生的结果会保留。",
+    "runningTitle": "正在服务器上运行",
+    "leaveNote": "您可以离开此页面或关闭浏览器，运行会继续，稍后可返回查看。",
+    "notRunTitle": "尚未运行",
+    "notRunMessage": "此模拟尚未运行。点击“运行模拟”开始。",
+    "runFailedTitle": "运行失败",
+    "runFailedGeneric": "模拟因错误而停止，已完成的工作已保留。",
+    "workerLost": "模拟进程意外停止，已完成的工作已保留。",
+    "startErrorTitle": "无法读取或启动运行",
+    "technicalDetails": "技术详情",
     "startGenerateReport": "开始生成结果报告",
     "generatingReport": "启动中...",
     "waitingForActions": "Waiting for agent actions...",
@@ -453,6 +467,8 @@
     "preparingScripts": "准备模拟脚本"
   },
   "log": {
+    "runContinuesOnServer": "此次运行将继续在服务器上进行，您可随时返回此页面查看。",
+    "runAdopted": "已重新连接到现有运行",
     "preparingGoBack": "准备返回 Step 2，正在关闭模拟...",
     "closingSimEnv": "正在关闭模拟环境...",
     "simEnvClosed": "✓ 模拟环境已关闭",
