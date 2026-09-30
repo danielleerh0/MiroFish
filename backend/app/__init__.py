@@ -63,10 +63,20 @@ def create_app(config_class=Config):
         return response
     
     # Register blueprints
-    from .api import graph_bp, simulation_bp, report_bp
+    from .api import graph_bp, simulation_bp, report_bp, world_bp
     app.register_blueprint(graph_bp, url_prefix='/api/graph')
     app.register_blueprint(simulation_bp, url_prefix='/api/simulation')
     app.register_blueprint(report_bp, url_prefix='/api/report')
+    app.register_blueprint(world_bp, url_prefix='/api/world')
+
+    # World model store (v2): apply migrations at start-up. Failure is logged, not fatal,
+    # so the legacy pipeline keeps working.
+    if app.config.get('WORLD_DB_AUTO_MIGRATE', True):
+        try:
+            from .world.db import upgrade_to_head
+            upgrade_to_head()
+        except Exception:
+            logger.exception("World model DB migration failed; /api/world will be unavailable")
     
     # Health check
     @app.route('/health')

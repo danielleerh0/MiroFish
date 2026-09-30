@@ -1,0 +1,95 @@
+{
+  "entities": [
+    {"key": "mla", "kind": "organisation", "name": "Medical Logistics Authority", "source_quote": "Medical Logistics Authority"},
+    {"key": "tidewater", "kind": "organisation", "name": "Tidewater Logistics", "source_quote": "Tidewater Logistics owns refrigerated truck RT-05."},
+    {"key": "greenmart", "kind": "organisation", "name": "Greenmart", "source_quote": "RT-05 is currently committed to Greenmart for its morning grocery run."},
+    {"key": "linkhaul", "kind": "organisation", "name": "Linkhaul", "source_quote": "RT-05 is also listed as standby capacity for Linkhaul."},
+    {"key": "quayline", "kind": "organisation", "name": "Quayline Carriers", "source_quote": "Quayline Carriers operates refrigerated truck QL-12"},
+    {"key": "corner-basket", "kind": "organisation", "name": "Corner Basket", "source_quote": "Greenmart supplies the Corner Basket store network."},
+    {"key": "rt-05", "kind": "vehicle", "name": "RT-05", "source_quote": "Tidewater Logistics owns refrigerated truck RT-05."},
+    {"key": "ql-12", "kind": "vehicle", "name": "QL-12", "source_quote": "Quayline Carriers operates refrigerated truck QL-12"},
+    {"key": "kestrel-park", "kind": "location", "name": "Kestrel Park", "source_quote": "RT-05 is parked at Kestrel Park."},
+    {"key": "dock-1", "kind": "facility", "name": "Dock 1", "source_quote": "All outbound pallets must pass through Dock 1."},
+    {"key": "medical-inventory", "kind": "inventory", "name": "Kestrel Park medical inventory", "source_quote": "The medical inventory at Kestrel Park is 480 pallets."}
+  ],
+  "facts": [
+    {"entity": "medical-inventory", "attribute": "pallets", "value": 480, "unit": "pallets", "source_quote": "The medical inventory at Kestrel Park is 480 pallets."},
+    {"entity": "medical-inventory", "attribute": "cold_hold_limit_hours", "value": 6, "unit": "hours", "source_quote": "the stock has a cold-hold limit of 6 hours."},
+    {"entity": "dock-1", "attribute": "throughput_pallets_per_hour", "value": 40, "unit": "pallets/hour", "source_quote": "Dock 1 handles 40 pallets per hour."},
+    {"entity": "rt-05", "attribute": "capacity_pallets", "value": 16, "unit": "pallets", "source_quote": "RT-05 carries 16 pallets."},
+    {"entity": "rt-05", "attribute": "refrigerated", "value": true, "source_quote": "Tidewater Logistics owns refrigerated truck RT-05."},
+    {"entity": "rt-05", "attribute": "operator", "value": "tidewater", "source_quote": "Tidewater Logistics owns refrigerated truck RT-05."},
+    {"entity": "rt-05", "attribute": "committed_to", "value": "greenmart", "source_quote": "RT-05 is currently committed to Greenmart for its morning grocery run."},
+    {"entity": "rt-05", "attribute": "assigned_to", "value": null},
+    {"entity": "ql-12", "attribute": "capacity_pallets", "value": 20, "unit": "pallets", "source_quote": "carries 20 pallets and is currently unassigned."},
+    {"entity": "ql-12", "attribute": "refrigerated", "value": true, "source_quote": "Quayline Carriers operates refrigerated truck QL-12"},
+    {"entity": "ql-12", "attribute": "operator", "value": "quayline", "source_quote": "Quayline Carriers operates refrigerated truck QL-12"},
+    {"entity": "ql-12", "attribute": "committed_to", "value": null, "source_quote": "carries 20 pallets and is currently unassigned."},
+    {"entity": "ql-12", "attribute": "assigned_to", "value": null, "source_quote": "carries 20 pallets and is currently unassigned."},
+    {"entity": "quayline", "attribute": "gdp_certified", "value": false, "source_quote": "Quayline's Good Distribution Practice certification expired on 15 September 2026."},
+    {"entity": "tidewater", "attribute": "gdp_certified", "value": true, "source_quote": "Tidewater's Good Distribution Practice certification is valid."},
+    {"entity": "corner-basket", "attribute": "receiving_window", "value": "06:00-09:00", "source_quote": "Corner Basket can only receive deliveries between 06:00 and 09:00."}
+  ],
+  "relationships": [
+    {"source": "tidewater", "target": "rt-05", "type": "owns", "source_quote": "Tidewater Logistics owns refrigerated truck RT-05."},
+    {"source": "rt-05", "target": "greenmart", "type": "committed_to", "source_quote": "RT-05 is currently committed to Greenmart for its morning grocery run."},
+    {"source": "rt-05", "target": "linkhaul", "type": "standby_for", "source_quote": "RT-05 is also listed as standby capacity for Linkhaul."},
+    {"source": "rt-05", "target": "kestrel-park", "type": "located_at", "source_quote": "RT-05 is parked at Kestrel Park."},
+    {"source": "quayline", "target": "ql-12", "type": "operates", "source_quote": "Quayline Carriers operates refrigerated truck QL-12"},
+    {"source": "greenmart", "target": "corner-basket", "type": "supplies", "source_quote": "Greenmart supplies the Corner Basket store network."},
+    {"source": "dock-1", "target": "kestrel-park", "type": "located_at"},
+    {"source": "medical-inventory", "target": "kestrel-park", "type": "located_at", "source_quote": "The medical inventory at Kestrel Park is 480 pallets."}
+  ],
+  "rules": [
+    {
+      "key": "medical-transport-eligibility",
+      "description": "A vehicle may carry medical stock only if it is refrigerated and its operator holds valid GDP certification.",
+      "source_quote": "Only vehicles run by an operator with valid Good Distribution Practice certification may carry medical stock.",
+      "definition": {
+        "for_each": {"kind": "vehicle"},
+        "when": {"all": [
+          {"op": "==", "left": {"fact": ["$self", "refrigerated"]}, "right": true},
+          {"op": "==", "left": {"fact": [{"fact": ["$self", "operator"]}, "gdp_certified"]}, "right": true}
+        ]},
+        "then": [{"set": ["$self", "medical_transport_eligible"], "value": true}],
+        "else": [{"set": ["$self", "medical_transport_eligible"], "value": false}]
+      }
+    },
+    {
+      "key": "dock-handling-time",
+      "description": "Hours needed to move the medical inventory through Dock 1.",
+      "definition": {
+        "when": {"op": ">", "left": {"fact": ["dock-1", "throughput_pallets_per_hour"]}, "right": 0},
+        "then": [{"set": ["medical-inventory", "dock_handling_hours"],
+                  "value": {"div": [{"fact": ["medical-inventory", "pallets"]}, {"fact": ["dock-1", "throughput_pallets_per_hour"]}]}}]
+      }
+    },
+    {
+      "key": "cold-hold-breach-risk",
+      "description": "Flag a cold-hold breach risk when dock handling time exceeds the cold-hold limit.",
+      "definition": {
+        "when": {"op": ">", "left": {"fact": ["medical-inventory", "dock_handling_hours"]}, "right": {"fact": ["medical-inventory", "cold_hold_limit_hours"]}},
+        "then": [{"set": ["medical-inventory", "cold_hold_breach_risk"], "value": true}],
+        "else": [{"set": ["medical-inventory", "cold_hold_breach_risk"], "value": false}]
+      }
+    }
+  ],
+  "profiles": [
+    {"entity": "mla", "role": "Coordinates relocation of medical stock", "objectives": ["Relocate all medical stock within the cold-hold limit"], "authority": ["REQUEST_ASSET"], "risk_tolerance": "low", "decision_style": "procedural"},
+    {"entity": "greenmart", "role": "Grocery retailer", "objectives": ["Deliver the Corner Basket morning run"], "incentives": ["Avoid store stockouts"], "authority": ["REQUEST_ASSET", "RELEASE_ASSET"], "risk_tolerance": "medium", "decision_style": "commercial"},
+    {"entity": "tidewater", "role": "Refrigerated carrier and owner of RT-05", "objectives": ["Keep contracted customers served"], "authority": ["RELEASE_ASSET"], "risk_tolerance": "medium"}
+  ],
+  "knowledge": [
+    {"agent": "mla", "subject": "rt-05", "attribute": "committed_to", "value": null, "kind": "believes", "source_quote": "still treats it as available"},
+    {"agent": "mla", "subject": "ql-12", "attribute": "medical_transport_eligible", "value": true, "kind": "believes", "source_quote": "The Authority is also unaware that Quayline's certification has lapsed."},
+    {"agent": "greenmart", "subject": "rt-05", "attribute": "committed_to", "value": "greenmart", "kind": "knows", "source_quote": "Greenmart knows its RT-05 booking is active."}
+  ],
+  "scripts": {
+    "baseline": [
+      {"round": 1, "actor": "mla", "type": "REQUEST_ASSET", "params": {"asset": "ql-12", "purpose": "medical"}, "rationale": "QL-12 is unassigned and refrigerated"},
+      {"round": 1, "actor": "mla", "type": "REQUEST_ASSET", "params": {"asset": "rt-05", "purpose": "medical"}, "rationale": "RT-05 appears available at Kestrel Park"},
+      {"round": 2, "actor": "greenmart", "type": "RELEASE_ASSET", "params": {"asset": "rt-05"}, "rationale": "Agreed to prioritise medical relocation"},
+      {"round": 3, "actor": "mla", "type": "REQUEST_ASSET", "params": {"asset": "rt-05", "purpose": "medical"}, "rationale": "Greenmart released RT-05"}
+    ]
+  }
+}
