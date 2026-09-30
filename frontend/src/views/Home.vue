@@ -1,10 +1,8 @@
 <template>
   <div class="home">
     <nav class="nav">
-      <div class="brand">MiroFish</div>
+      <div class="brand">ScenarioIQ</div>
       <div class="nav-right">
-        <LanguageSwitcher />
-        <a href="https://github.com/666ghj/MiroFish" target="_blank" rel="noopener" class="nav-link">Source code</a>
       </div>
     </nav>
 
@@ -14,7 +12,7 @@
         <div class="hero-text">
           <h1>Rehearse a decision before you make it</h1>
           <p class="lede">
-            MiroFish turns your document into a simulated world of the people and
+            ScenarioIQ turns your document into a simulated world of the people and
             organisations it describes. You pose a question, run the scenario, and see how
             each party is likely to respond, and what follows from that.
           </p>
@@ -185,7 +183,6 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import HistoryDatabase from '../components/HistoryDatabase.vue'
-import LanguageSwitcher from '../components/LanguageSwitcher.vue'
 
 const router = useRouter()
 
@@ -269,7 +266,7 @@ const nodes = [
 const steps = [
   { title: 'Share a document', body: 'A policy paper, briefing, plan or news report that describes the situation.' },
   { title: 'Describe the decision', body: 'Say what you plan to do, and what you want to know about the response.' },
-  { title: 'MiroFish maps the parties', body: 'It finds the people, firms and groups in your document and builds a simulated version of each, with its own interests and memory.' },
+  { title: 'ScenarioIQ maps the parties', body: 'It finds the people, firms and groups in your document and builds a simulated version of each, with its own interests and memory.' },
   { title: 'The scenario plays out', body: 'The parties react to your decision and to each other over many rounds. You can watch this happen.' },
   { title: 'Review, then question', body: 'An AI analyst writes up what happened. You can ask the analyst, or any single party, to explain its actions.' }
 ]

@@ -1,9 +1,8 @@
 services:
-  mirofish:
-    image: ghcr.io/666ghj/mirofish:latest
-    # 加速镜像（如拉取缓慢可替换上方地址）
-    # image: ghcr.nju.edu.cn/666ghj/mirofish:latest
-    container_name: mirofish
+  scenarioiq:
+    build: .
+    image: scenarioiq:local
+    container_name: scenarioiq
     env_file:
       - .env
     ports:
@@ -12,3 +11,5 @@ services:
     restart: unless-stopped
     volumes:
       - ./backend/uploads:/app/backend/uploads
+      # SQLite landscape store (added in v2 persistence work)
+      - ./data:/app/data

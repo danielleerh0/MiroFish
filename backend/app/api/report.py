@@ -24,7 +24,7 @@ from ..utils.zep_lifecycle import (
     unregister_graph_reader,
 )
 
-logger = get_logger('mirofish.api.report')
+logger = get_logger('scenarioiq.api.report')
 
 
 # ============== 报告生成接口 ==============
@@ -1058,7 +1058,7 @@ def search_graph_tool():
     
     请求（JSON）：
         {
-            "graph_id": "mirofish_xxxx",
+            "graph_id": "scenarioiq_xxxx",
             "query": "搜索查询",
             "limit": 10
         }
@@ -1106,7 +1106,7 @@ def get_graph_statistics_tool():
     
     请求（JSON）：
         {
-            "graph_id": "mirofish_xxxx"
+            "graph_id": "scenarioiq_xxxx"
         }
     """
     try:

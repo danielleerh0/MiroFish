@@ -76,7 +76,7 @@ class GraphBuilderService:
         self,
         text: str,
         ontology: Dict[str, Any],
-        graph_name: str = "MiroFish Graph",
+        graph_name: str = "ScenarioIQ Graph",
         chunk_size: int = 500,
         chunk_overlap: int = 50,
         batch_size: int = 350
@@ -127,7 +127,7 @@ class GraphBuilderService:
         chunk_size: int,
         chunk_overlap: int,
         batch_size: int,
-        locale: str = 'zh'
+        locale: str = 'en'
     ):
         """图谱构建工作线程"""
         set_locale(locale)
@@ -224,7 +224,7 @@ class GraphBuilderService:
     ) -> str:
         """Create a graph with a caller-durable ID and reconcile lost replies."""
 
-        graph_id = graph_id or f"mirofish_{uuid.uuid4().hex[:16]}"
+        graph_id = graph_id or f"scenarioiq_{uuid.uuid4().hex[:16]}"
         # Persist the client-generated ID before the non-idempotent POST so a
         # later reset can clean up a graph whose successful response was lost.
         if graph_id_callback:
@@ -234,7 +234,7 @@ class GraphBuilderService:
             self.client.graph.create(
                 graph_id=graph_id,
                 name=name,
-                description="MiroFish Social Simulation Graph"
+                description="ScenarioIQ Social Simulation Graph"
             )
         except Exception as error:
             if not is_retryable_zep_error(error):
@@ -288,7 +288,7 @@ class GraphBuilderService:
                 for batch in getattr(page, "batches", None) or []:
                     metadata = getattr(batch, "metadata", None) or {}
                     if (
-                        metadata.get("mirofish_operation_id") == operation_id
+                        metadata.get("scenarioiq_operation_id") == operation_id
                         and metadata.get("graph_id") == graph_id
                     ):
                         matches.append(batch)
@@ -435,7 +435,7 @@ class GraphBuilderService:
         try:
             batch = self.client.batch.create(
                 metadata={
-                    "mirofish_operation_id": operation_id,
+                    "scenarioiq_operation_id": operation_id,
                     "graph_id": graph_id,
                     "chunk_count": total_chunks,
                 }
@@ -473,9 +473,9 @@ class GraphBuilderService:
                     graph_id=graph_id,
                     data=chunk,
                     data_type="text",
-                    source_description="MiroFish source document chunk",
+                    source_description="ScenarioIQ source document chunk",
                     metadata={
-                        "mirofish_operation_id": operation_id,
+                        "scenarioiq_operation_id": operation_id,
                         "chunk_index": i + offset,
                         "chunk_sha256": hashlib.sha256(
                             chunk.encode("utf-8")

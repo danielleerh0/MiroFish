@@ -14,7 +14,7 @@ export default defineConfig({
   server: {
     port: 3000,
     open: true,
-    allowedHosts: ['mirofish-en.srv1999509.hstgr.cloud'],    
+    allowedHosts: (process.env.ALLOWED_HOSTS || 'localhost').split(','),
     proxy: {
       '/api': {
         target: 'http://localhost:5001',

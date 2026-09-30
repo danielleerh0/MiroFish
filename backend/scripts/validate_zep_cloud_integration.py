@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
-# Capture the caller-supplied key before importing MiroFish modules. app.config
+# Capture the caller-supplied key before importing ScenarioIQ modules. app.config
 # deliberately loads the repository .env with override=True, which must not
 # silently replace the account selected for this explicit validation process.
 _PROCESS_ZEP_API_KEY = os.environ.get("ZEP_API_KEY", "").strip()
@@ -378,9 +378,9 @@ def _episode_to_batch_item(graph_id: str, item: SourceEpisode, index: int) -> Ba
         data=item.data,
         data_type=item.data_type,
         created_at=item.created_at,
-        source_description="MiroFish deep Zep Cloud validation corpus",
+        source_description="ScenarioIQ deep Zep Cloud validation corpus",
         metadata={
-            "source": "mirofish_zep_deep_validation",
+            "source": "scenarioiq_zep_deep_validation",
             "phase": item.phase,
             "sequence": index,
         },
@@ -393,8 +393,8 @@ def _add_and_wait(client: Any, graph_id: str, item: SourceEpisode, timeout: int)
         type=item.data_type,
         data=item.data,
         created_at=item.created_at,
-        source_description="MiroFish temporal Zep Cloud validation update",
-        metadata={"source": "mirofish_zep_deep_validation", "phase": item.phase},
+        source_description="ScenarioIQ temporal Zep Cloud validation update",
+        metadata={"source": "scenarioiq_zep_deep_validation", "phase": item.phase},
     )
     episode_uuid = _uuid(episode)
     if not episode_uuid:
@@ -468,7 +468,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     api_key = _require_process_api_key()
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    graph_id = args.graph_id or f"mirofish_zep_deep_{stamp}"
+    graph_id = args.graph_id or f"scenarioiq_zep_deep_{stamp}"
     builder = GraphBuilderService(api_key=api_key)
     client = builder.client
     created = False
@@ -484,7 +484,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     print(f"[zep-deep] graph_id={graph_id}", flush=True)
     try:
-        builder.create_graph("MiroFish Zep Cloud Deep Validation", graph_id=graph_id)
+        builder.create_graph("ScenarioIQ Zep Cloud Deep Validation", graph_id=graph_id)
         created = True
         print("[zep-deep] graph created", flush=True)
 
@@ -493,7 +493,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         ontology_probe = {"entity_types": [{"name": "ProbeEntity", "attributes": []}], "edge_types": []}
         try:
             builder.set_ontology(graph_id, ontology_probe)
-            result["empty_attribute_ontology_probe"] = "accepted_after_mirofish_normalization"
+            result["empty_attribute_ontology_probe"] = "accepted_after_scenarioiq_normalization"
         except Exception as error:
             result["empty_attribute_ontology_probe"] = {
                 "error_type": type(error).__name__,
@@ -507,7 +507,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         operation_id = f"deep-validation-{stamp}"
         batch = client.batch.create(
             metadata={
-                "mirofish_operation_id": operation_id,
+                "scenarioiq_operation_id": operation_id,
                 "graph_id": graph_id,
                 "suite": "zep_deep_validation",
             }
@@ -602,9 +602,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         updater_drained = True
         updater_stats = updater.get_stats()
         if updater_stats["items_sent"] != 5 or updater_stats["pending_episode_count"] != 0:
-            raise AssertionError(f"unexpected MiroFish updater stats: {updater_stats}")
-        result["mirofish_updater"] = updater_stats
-        print("[zep-deep] MiroFish updater processed 5 mock activities", flush=True)
+            raise AssertionError(f"unexpected ScenarioIQ updater stats: {updater_stats}")
+        result["scenarioiq_updater"] = updater_stats
+        print("[zep-deep] ScenarioIQ updater processed 5 mock activities", flush=True)
 
         final_nodes = fetch_all_nodes(client, graph_id, page_size=2)
         final_edges = fetch_all_edges(client, graph_id, page_size=2)
@@ -715,7 +715,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
         if len(entity_context.related_edges) != len(complete_node_edges):
             raise AssertionError(
-                "MiroFish entity context omitted incoming or outgoing node edges"
+                "ScenarioIQ entity context omitted incoming or outgoing node edges"
             )
 
         result["runtime_assertions"] = {
@@ -846,7 +846,7 @@ def _compact_result(result: dict[str, Any]) -> dict[str, Any]:
         "temporal_update_episode_count": len(
             result.get("temporal_update_episode_uuids", [])
         ),
-        "mirofish_updater": result.get("mirofish_updater"),
+        "scenarioiq_updater": result.get("scenarioiq_updater"),
         "final": {
             key: final.get(key)
             for key in (
