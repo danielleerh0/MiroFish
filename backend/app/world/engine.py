@@ -13,6 +13,7 @@ Three stores stay separate:
 from __future__ import annotations
 
 import copy
+import json
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
@@ -213,7 +214,8 @@ def _request_asset(state: WorldState, a: ProposedAction) -> Outcome:
                 d for d in state.derivation.derivations
                 if d.entity == asset and d.attribute == "medical_transport_eligible"
             ]
-            why = f" (rule {reasons[0].rule_key}: {reasons[0].inputs})" if reasons else ""
+            why = (f" (rule {reasons[0].rule_key}: {json.dumps(reasons[0].inputs, sort_keys=True)})"
+                   if reasons else "")
             return Outcome(
                 False,
                 f"{name} is not eligible for medical transport{why}",

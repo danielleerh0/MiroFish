@@ -6,10 +6,8 @@ Scenario simulation for crisis and policy planning. Upload a briefing, describe 
 
 v2 in development. English only. Single user.
 
-Planned v2 changes:
-
-1. Store the seed landscape (ontology, knowledge graph reference, agent profiles) in SQLite, so you build it once and reuse it.
-2. Run secondary simulations that branch from a stored landscape, to test the effect of one change against a baseline.
+- **P0 (branch `p0-world-model`):** a reviewed world model in SQLite, provenance tags, an append-only event log, truth kept separate from agent knowledge, JSON rules, and a deterministic action slice. See [`docs/v2-p0-world-model.md`](docs/v2-p0-world-model.md). The UI is at `/world`.
+- **Legacy pipeline:** ontology, then Zep graph, then OASIS, then report. It is unchanged and runs beside P0.
 
 ## Run
 

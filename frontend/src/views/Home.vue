@@ -3,6 +3,7 @@
     <nav class="nav">
       <div class="brand">ScenarioIQ</div>
       <div class="nav-right">
+        <router-link to="/world" class="nav-link">World model (v2)</router-link>
       </div>
     </nav>
 
