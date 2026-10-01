@@ -183,6 +183,88 @@
             </table>
           </section>
 
+          <!-- Injections -->
+          <section v-if="tab === 'injections'" class="panel">
+            <p class="muted small">An injection is new information (escalation or de-escalation) applied to a running
+              world. It never edits the frozen seed. Review it, finalize it, then apply it when you continue a run.</p>
+            <div class="row-actions">
+              <button v-if="isRt05" class="btn ghost small-btn" :disabled="busy" @click="onLoadRt05Updates">
+                Load RT-05 updates (escalation + de-escalation)</button>
+            </div>
+
+            <div class="inj-list">
+              <button v-for="i in world.injections" :key="i.id" class="ver"
+                      :class="{ active: inj && inj.id === i.id }" @click="openInjection(i.id)">
+                {{ i.label }} <span class="chip" :class="i.status === 'ready' ? 'approved' : 'draft'">{{ i.status }}</span>
+                <span v-if="i.pending" class="muted small">{{ i.pending }} to review</span>
+              </button>
+            </div>
+
+            <div v-if="inj" class="inj-detail">
+              <h3>{{ inj.label }}</h3>
+              <details>
+                <summary class="small">Redacted briefing ({{ inj.redacted_terms }} placeholders, shared with the seed)</summary>
+                <pre class="preview">{{ inj.redacted_text }}</pre>
+              </details>
+              <div v-if="inj.status === 'draft'" class="row-actions">
+                <label class="small"><input type="checkbox" v-model="autoAccept" /> Accept items the source proves</label>
+                <button class="btn" :disabled="busy" @click="onDraftInjection">Draft changes with LLM</button>
+                <button class="btn ghost" :disabled="busy || injPending > 0 || !inj.items.length" @click="onFinalize"
+                        :title="injPending ? 'Review every proposed item first' : 'Freeze this injection'">Finalize</button>
+              </div>
+              <div v-if="injResult" class="note small">
+                Drafted {{ summarise(injResult.counts) }}.
+                <span v-if="injResult.call">Model {{ injResult.call.model }} ({{ injResult.call.prompt_version }}).</span>
+                <details v-if="injResult.issues.length"><summary>{{ injResult.issues.length }} items dropped</summary>
+                  <ul><li v-for="(x, n) in injResult.issues" :key="n">{{ x }}</li></ul></details>
+              </div>
+              <table class="grid">
+                <thead><tr><th>#</th><th>Change</th><th>Source</th><th>Status</th><th v-if="inj.status === 'draft'"></th></tr></thead>
+                <tbody>
+                  <tr v-for="it in inj.items" :key="it.id" :class="it.review_status">
+                    <td>{{ it.seq }}</td>
+                    <td class="mono detail">{{ describeItem(it) }}</td>
+                    <td class="quote">
+                      <span v-if="it.source_quote"><span class="qv" :class="qClass(it)" :title="qTitle(it)">{{ qIcon(it) }}</span>
+                        "{{ it.source_quote }}"</span>
+                      <span v-else class="muted small">{{ it.origin }}</span>
+                    </td>
+                    <td><span class="chip" :class="it.review_status">{{ it.review_status }}</span>
+                      <span v-if="it.auto_accepted" class="small muted"> auto</span></td>
+                    <td v-if="inj.status === 'draft'" class="acts">
+                      <button v-if="it.review_status !== 'approved'" class="link ok" :disabled="busy"
+                              @click="decideItem(it, 'approve')">Approve</button>
+                      <button v-if="it.review_status !== 'rejected'" class="link bad" :disabled="busy"
+                              @click="decideItem(it, 'reject')">Reject</button>
+                    </td>
+                  </tr>
+                  <tr v-if="!inj.items.length"><td colspan="5" class="muted">No changes yet. Draft them with the LLM.</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <h3>New injection</h3>
+            <input v-model="injLabel" class="wide" placeholder="Label, e.g. Escalation: second power fault" />
+            <div class="upload">
+              <input type="file" accept=".pdf,.md,.txt,.markdown" @change="onInjFile" />
+              <span class="muted small">or paste the update below</span>
+            </div>
+            <textarea v-if="!injFile" v-model="injText" rows="6" placeholder="Paste the update briefing"></textarea>
+            <p class="muted small">Terms already redacted in this scenario are redacted again with the same placeholders.
+              Add only new names.</p>
+            <div v-for="(t, i) in injTerms" :key="'it' + i" class="term">
+              <input v-model="t.text" placeholder="New name to redact" />
+              <select v-model="t.label"><option>ORG</option><option>PERSON</option><option>SITE</option>
+                <option>ASSET</option><option>FIGURE</option><option>TERM</option></select>
+              <button class="link" @click="injTerms.splice(i, 1)">Remove</button>
+            </div>
+            <button class="link" @click="injTerms.push({ text: '', label: 'ORG' })">+ Add term</button>
+            <div class="row-actions">
+              <button class="btn" :disabled="busy || !injLabel.trim() || (!injFile && !injText.trim())"
+                      @click="onCreateInjection">Create injection</button>
+            </div>
+          </section>
+
           <!-- Simulations -->
           <section v-if="tab === 'sims'" class="panel">
             <template v-if="!isDraft">
@@ -198,10 +280,13 @@
             <p v-else class="muted">Approve this version before running simulations.</p>
 
             <h3 v-if="world.simulations.length">Runs</h3>
-            <div class="runs">
-              <button v-for="s in world.simulations" :key="s.id" class="ver"
+            <div class="runs tree">
+              <button v-for="s in runTree" :key="s.id" class="ver run"
+                      :style="{ marginLeft: s.depth * 18 + 'px' }"
                       :class="{ active: sim && sim.simulation.id === s.id }" @click="openSim(s.id)">
-                {{ s.name }} <span class="muted small">{{ s.run_config.rules_hash }}</span>
+                <span v-if="s.depth">↳ </span>{{ s.name }}
+                <span v-if="s.parent_id" class="muted small">after round {{ s.fork_round }}</span>
+                <span v-if="s.injection_label" class="chip x0">{{ s.injection_label }}</span>
               </button>
             </div>
 
@@ -209,6 +294,29 @@
               <div class="events-head">
                 <h3>Event log · {{ sim.simulation.name }}</h3>
                 <button class="btn ghost small-btn" :disabled="busy" @click="onReplay">Replay</button>
+              </div>
+              <div class="continue">
+                <h4>Continue this run</h4>
+                <p class="muted small">Branch after a round. The original run stays as it is. Apply an injection to model
+                  escalation or de-escalation, then add the next actions.</p>
+                <div class="row-actions">
+                  <label class="small">After round
+                    <select v-model.number="forkRound">
+                      <option v-for="r in simRounds" :key="r" :value="r">{{ r }}</option>
+                    </select></label>
+                  <label class="small">Injection
+                    <select v-model="forkInjection">
+                      <option value="">None (branch only)</option>
+                      <option v-for="i in readyInjections" :key="i.id" :value="i.id">{{ i.label }}</option>
+                    </select></label>
+                  <input v-model="forkName" placeholder="Branch name" />
+                </div>
+                <textarea v-model="forkScript" rows="6" class="mono" spellcheck="false"
+                          :placeholder="`Actions from round ${forkRound + 1}, as a JSON list`"></textarea>
+                <div class="row-actions">
+                  <button class="btn" :disabled="busy" @click="onContinue">Continue</button>
+                  <button v-if="isRt05 && forkInjection" class="link" @click="fillFixtureBranchScript">Use RT-05 sample actions</button>
+                </div>
               </div>
               <div class="legend small">
                 <span v-for="(label, code) in provLabel" :key="code"><span class="prov" :class="code">{{ code }}</span> {{ label }}</span>
@@ -261,6 +369,19 @@ const onlyPending = ref(false)
 const editing = ref(null)
 const editBuffer = ref({})
 
+const inj = ref(null)
+const injResult = ref(null)
+const autoAccept = ref(true)
+const injLabel = ref('')
+const injText = ref('')
+const injFile = ref(null)
+const injTerms = ref([])
+const forkRound = ref(0)
+const forkInjection = ref('')
+const forkName = ref('Branch')
+const forkScript = ref('[]')
+const fixtureBranchScripts = ref(null)
+
 const scriptText = ref('[]')
 const runName = ref('Baseline')
 const sim = ref(null)
@@ -271,7 +392,8 @@ const provLabel = {
   A0: 'Agent action',
   A1: 'Agent belief / assertion',
   S0: 'Simulation outcome',
-  U0: 'Unverified / uncertain'
+  U0: 'Unverified / uncertain',
+  X0: 'Injected from outside'
 }
 
 const reviewTables = ['entities', 'facts', 'relationships', 'rules', 'profiles', 'knowledge']
@@ -323,6 +445,7 @@ const visibleTabs = computed(() => {
   return [
     { id: 'source', label: 'Source', count: world.value.documents.length },
     ...reviewTables.map(t => ({ id: t, label: t[0].toUpperCase() + t.slice(1), count: world.value[t].length })),
+    ...(isDraft.value ? [] : [{ id: 'injections', label: 'Injections', count: world.value.injections.length }]),
     { id: 'sims', label: 'Simulations', count: world.value.simulations.length }
   ]
 })
@@ -333,6 +456,23 @@ const shownRows = computed(() => {
 })
 const verifiedPending = computed(() =>
   (world.value?.[tab.value] || []).filter(r => r.review_status === 'proposed' && r.quote_verified === true))
+
+const isRt05 = computed(() => world.value?.scenario.name.startsWith('RT-05'))
+const readyInjections = computed(() => (world.value?.injections || []).filter(i => i.status === 'ready'))
+const injPending = computed(() => (inj.value?.items || []).filter(i => i.review_status === 'proposed').length)
+const simRounds = computed(() => {
+  const max = Math.max(0, ...(sim.value?.events || []).map(e => e.round))
+  return Array.from({ length: max + 1 }, (_, i) => i)
+})
+const runTree = computed(() => {
+  const sims = world.value?.simulations || []
+  const kids = {}
+  sims.forEach(s => { (kids[s.parent_id || ''] ||= []).push(s) })
+  const out = []
+  const walk = (pid, depth) => (kids[pid] || []).forEach(s => { out.push({ ...s, depth }); walk(s.id, depth + 1) })
+  walk('', 0)
+  return out
+})
 
 const hasInput = computed(() => !!file.value || !!pasteText.value.trim())
 const cleanTerms = () => terms.value.filter(t => t.text.trim())
@@ -478,7 +618,104 @@ async function onRun() {
   })
 }
 
-async function openSim(id) { await guard(async () => { sim.value = (await api.getSimulation(id)).data }) }
+async function openInjection(id) {
+  await guard(async () => { inj.value = (await api.getInjection(id)).data; injResult.value = null })
+}
+
+function onInjFile(e) { injFile.value = e.target.files[0] || null }
+
+async function refreshInjection() {
+  if (inj.value) inj.value = (await api.getInjection(inj.value.id)).data
+  const keep = inj.value
+  const keepRes = injResult.value
+  await openVersion(versionId.value)
+  inj.value = keep
+  injResult.value = keepRes
+  tab.value = 'injections'
+}
+
+async function onCreateInjection() {
+  await guard(async () => {
+    const res = await api.createInjection(versionId.value, {
+      file: injFile.value, text: injText.value, filename: 'update.txt', label: injLabel.value,
+      terms: injTerms.value.filter(t => t.text.trim())
+    })
+    inj.value = res.data
+    injLabel.value = ''; injText.value = ''; injFile.value = null; injTerms.value = []
+    await refreshInjection()
+  })
+}
+
+async function onDraftInjection() {
+  await guard(async () => {
+    const res = await api.draftInjection(inj.value.id, autoAccept.value)
+    injResult.value = res.data
+    inj.value = res.data.injection
+    await refreshInjection()
+  })
+}
+
+async function decideItem(it, decision) {
+  await guard(async () => { await api.reviewInjectionItem(it.id, decision); await refreshInjection() })
+}
+
+async function onFinalize() {
+  await guard(async () => { await api.finalizeInjection(inj.value.id); await refreshInjection() })
+}
+
+async function onLoadRt05Updates() {
+  await guard(async () => {
+    const res = await api.loadRt05Injections(versionId.value)
+    fixtureBranchScripts.value = res.data
+    await openVersion(versionId.value)
+    tab.value = 'injections'
+  })
+}
+
+function fillFixtureBranchScript() {
+  const fx = fixtureBranchScripts.value
+  const chosen = readyInjections.value.find(i => i.id === forkInjection.value)
+  if (!chosen) return
+  const key = chosen.label.toLowerCase().startsWith('de-escalation') ? 'deescalation' : 'escalation'
+  const script = fx?.scripts?.[key]
+  if (!script) { error.value = 'Load the RT-05 updates first to get sample actions'; return }
+  const shift = forkRound.value + 1 - Math.min(...script.map(a => a.round))
+  forkScript.value = JSON.stringify(script.map(a => ({ ...a, round: a.round + shift })), null, 2)
+  forkName.value = chosen.label.split(':')[0]
+}
+
+async function onContinue() {
+  await guard(async () => {
+    let actions
+    try { actions = JSON.parse(forkScript.value || '[]') } catch { throw new Error('Actions are not valid JSON') }
+    const res = await api.continueRun(sim.value.simulation.id, {
+      fork_round: forkRound.value, injection_id: forkInjection.value || null, actions, name: forkName.value
+    })
+    const keep = res.data
+    await openVersion(versionId.value)
+    sim.value = keep
+    tab.value = 'sims'
+  })
+}
+
+function describeItem(it) {
+  const p = it.payload
+  switch (it.op) {
+    case 'add_entity': return `+ ${p.kind} ${p.key} (${p.name})`
+    case 'set_fact': return `${p.entity}.${p.attribute} → ${fmt(p.value)}${p.unit ? ' ' + p.unit : ''}` +
+      (p.informed?.length ? `  · told: ${p.informed.join(', ')}` : '  · told: nobody')
+    case 'add_rule': return `rule ${p.key}: ${p.description}`
+    case 'set_profile': return `profile ${p.entity}: ${p.role}; authority ${fmt(p.authority)}`
+    default: return fmt(p)
+  }
+}
+
+async function openSim(id) {
+  await guard(async () => {
+    sim.value = (await api.getSimulation(id)).data
+    forkRound.value = Math.max(0, ...sim.value.events.map(e => e.round))
+  })
+}
 
 async function onReplay() {
   await guard(async () => {
@@ -519,6 +756,19 @@ function describe(e) {
       return `${e.valid ? 'VALID' : 'REJECTED'}: ${e.reason}`
     case 'state_change':
       return `${p.entity}.${p.attribute}: ${fmt(p.old)} → ${fmt(p.new)}`
+    case 'fork':
+      return `Continues "${p.parent_name}" after round ${p.fork_round}`
+    case 'injection':
+      return `${p.label}: ${p.fact_changes} fact changes` +
+        (p.new_entities.length ? `; new ${p.new_entities.join(', ')}` : '') +
+        (p.rules.length ? `; rules ${p.rules.join(', ')}` : '') +
+        (p.profiles.length ? `; profiles ${p.profiles.join(', ')}` : '')
+    case 'entity_added':
+      return `New ${p.kind} ${p.entity} (${p.name})`
+    case 'rule_set':
+      return `Rule ${p.rule}${p.replaces_seed_rule ? ' replaces the seed rule in this branch' : ' added'}`
+    case 'profile_set':
+      return `Profile for ${p.entity}; authority ${fmt(p.authority)}`
     case 'knowledge_update':
       return `Now ${p.kind} ${p.subject}.${p.attribute} = ${fmt(p.new)} (was ${fmt(p.old_belief)})`
     default:
@@ -639,6 +889,18 @@ textarea { width: 100%; }
 .prov.A1 { background: #8C7FC0; }
 .prov.S0 { background: var(--teal); }
 .prov.U0 { background: var(--amber); }
+.prov.X0 { background: #A0522D; }
+.chip.x0 { border-color: #A0522D; color: #A0522D; text-transform: none; letter-spacing: 0; margin-left: 4px; }
+.runs.tree { flex-direction: column; align-items: flex-start; }
+.run { text-align: left; }
+.inj-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.inj-detail { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 6px; }
+.continue { background: var(--paper); border-radius: 6px; padding: 10px 12px; margin: 10px 0; }
+.continue h4 { margin: 0 0 4px; }
+.continue label { display: flex; align-items: center; gap: 6px; }
+.wide { width: 100%; margin-bottom: 6px; }
+.ev.injection td, .ev.entity_added td, .ev.rule_set td, .ev.profile_set td { background: #F6EEE8; }
+.ev.fork td { background: #F1F1F4; font-style: italic; }
 .legend { display: flex; flex-wrap: wrap; gap: 12px; margin: 6px 0 10px; color: var(--muted); }
 
 .events-head { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; }

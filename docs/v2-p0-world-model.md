@@ -35,6 +35,7 @@ Mutable state lives in facts, for example `rt-05.committed_to = "greenmart"`. Re
 | A1 | Agent belief | Initial knowledge; the observation logged before each action |
 | S0 | Simulation outcome | Validation result, state change, knowledge update |
 | U0 | Unverified | A draft row, a skipped rule, an undeterminable check |
+| X0 | Injected | A change from an injection (escalation or de-escalation) |
 
 ## Rules
 
@@ -99,6 +100,48 @@ UI: `/world` (linked from the home page).
 - `WORLD_DB_URL`: default `sqlite:///<repo>/data/scenarioiq.db`. In Docker, `./data` is a volume.
 - `WORLD_EXTRACTION_MODEL`: model for drafting. Default `LLM_MODEL_NAME`. This is the first tier-1 hook for the P1 router.
 - Migrations run at app start. To run them by hand: `cd backend && uv run alembic upgrade head`.
+
+## Injections and branching (added after P0)
+
+An injection is new information applied to a **running** world, for example an escalation or a de-escalation. It never edits the frozen seed.
+
+```
+seed briefing → world v1 (frozen) → run rounds 1–N
+                                     ├─ continue after N + inject "escalation"    → rounds N+1…
+                                     └─ continue after N + inject "de-escalation" → rounds N+1…
+```
+
+1. **Create.** Paste or upload the update briefing. It is redacted with the scenario's shared placeholder map, so `[ORG_1]` means the same organisation in every document.
+2. **Draft.** The LLM sees the current world and the new briefing, and returns only the changes. You can also import a hand-written change set.
+3. **Review.** An item is accepted automatically only when its quote is in the source and, for a number, the number appears in that quote. New rules and new authority (profiles) always need a human.
+4. **Finalize.** This freezes the injection and creates the rows for the entities it adds.
+5. **Continue a run.** Choose a run, a round and an injection. The engine rebuilds that run's state after the round from its log. It applies the injection as X0 events, re-runs the rules (F1), and tells only the actors that the briefing names (X0 knowledge updates). Then it runs the new actions. The parent run does not change.
+
+Details:
+
+- A run can be continued from round 0 up to its last round, with or without an injection. Branches of branches are supported.
+- An injected rule with the same key as a seed rule replaces that rule in the branch only, for example a temporary regulatory relaxation.
+- Replay covers continuations: the fork, the injection and the script.
+- `X0` is the provenance tag for any change injected from outside the simulation.
+
+API:
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/versions/<id>/injections` | Create (multipart file or JSON text, `label`, `terms`) |
+| GET | `/injections/<id>` | Injection and its items |
+| POST | `/injections/<id>/draft` | LLM draft (`auto_accept`, default true) |
+| POST | `/injections/<id>/import` | Hand-written change set |
+| PATCH | `/injection-items/<id>` | Approve, reject or edit an item |
+| POST | `/injections/<id>/finalize` | Freeze |
+| POST | `/simulations/<id>/continue` | `fork_round`, `injection_id?`, `actions`, `name` |
+| POST | `/fixtures/rt05/injections` | Synthetic RT-05 escalation and de-escalation (`version_id`) |
+
+Known limits:
+
+- Agents do not reason over what they know. An actor told that Quayline is recertified still believes QL-12 is ineligible until an action teaches it otherwise. P1 agents must derive beliefs from their knowledge.
+- Injections start only by hand. Condition triggers (for example "on a cold-hold breach") are not built.
+- Removing an entity (for example a truck that is destroyed) is not an operation. Model it as a fact change, such as `status = "lost"`.
 
 ## Known limits
 

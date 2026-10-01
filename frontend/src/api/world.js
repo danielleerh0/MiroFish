@@ -39,3 +39,24 @@ export const runSimulation = (versionId, actions, name) =>
   service.post(`/api/world/versions/${versionId}/simulations`, { actions, name })
 export const getSimulation = (id) => service.get(`/api/world/simulations/${id}`)
 export const replaySimulation = (id) => service.post(`/api/world/simulations/${id}/replay`)
+
+// Injections (new information into a running world) and run continuation
+export const createInjection = (versionId, { file, text, filename, terms, label }) => {
+  if (file) {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('terms', JSON.stringify(terms || []))
+    fd.append('label', label)
+    return service.post(`/api/world/versions/${versionId}/injections`, fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+  }
+  return service.post(`/api/world/versions/${versionId}/injections`, { text, filename, terms, label })
+}
+export const getInjection = (id) => service.get(`/api/world/injections/${id}`)
+export const draftInjection = (id, autoAccept) => service.post(`/api/world/injections/${id}/draft`, { auto_accept: autoAccept })
+export const importInjection = (id, spec, autoAccept) =>
+  service.post(`/api/world/injections/${id}/import`, { spec, auto_accept: autoAccept })
+export const reviewInjectionItem = (id, decision, edits) =>
+  service.patch(`/api/world/injection-items/${id}`, { decision, edits })
+export const finalizeInjection = (id) => service.post(`/api/world/injections/${id}/finalize`)
+export const continueRun = (simId, body) => service.post(`/api/world/simulations/${simId}/continue`, body)
+export const loadRt05Injections = (versionId) => service.post('/api/world/fixtures/rt05/injections', { version_id: versionId })
