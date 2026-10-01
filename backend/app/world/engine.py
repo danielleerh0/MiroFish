@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import rules as rules_mod
@@ -29,6 +29,8 @@ from .models import (
     Event,
     Fact,
     InitialKnowledge,
+    Injection,
+    InjectionItem,
     KnowledgeKind,
     KnowledgeUpdate,
     Provenance,
@@ -123,7 +125,8 @@ def load_world(session: Session, version_id: str) -> WorldState:
 
     approved = ReviewStatus.APPROVED
     ents = session.scalars(
-        select(Entity).where(Entity.version_id == version_id, Entity.review_status == approved)
+        select(Entity).where(Entity.version_id == version_id, Entity.review_status == approved,
+                             Entity.injection_id.is_(None))
     ).all()
     by_id = {e.id: e for e in ents}
     entities = {e.key: {"id": e.id, "kind": e.kind.value, "name": e.name} for e in ents}
@@ -323,38 +326,230 @@ def _log_derivations(log: _Log, round_: int, before: dict, caused_by: Optional[s
                     reason=s.reason)
 
 
+# ---------------------------------------------------------------------------
+# Injections and run continuation
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class InjectionParts:
+    injection: Injection
+    entities: dict[str, dict[str, Any]]
+    rules: list[tuple[str, dict[str, Any]]]
+    profiles: dict[str, dict[str, Any]]
+    facts: list[dict[str, Any]]
+
+
+def _injection_parts(session: Session, injection_id: str, version_id: str) -> InjectionParts:
+    inj = session.get(Injection, injection_id)
+    if inj is None:
+        raise EngineError(f"Injection not found: {injection_id}")
+    if inj.version_id != version_id:
+        raise EngineError("Injection belongs to a different scenario version")
+    if inj.status != "ready":
+        raise EngineError("Finalize the injection before applying it")
+    items = session.scalars(select(InjectionItem).where(
+        InjectionItem.injection_id == inj.id, InjectionItem.review_status == ReviewStatus.APPROVED,
+    ).order_by(InjectionItem.seq)).all()
+    entities: dict[str, dict[str, Any]] = {}
+    for i in items:
+        if i.op == "add_entity":
+            row = session.scalar(select(Entity).where(Entity.version_id == version_id,
+                                                      Entity.key == i.payload["key"]))
+            entities[row.key] = {"id": row.id, "kind": row.kind.value, "name": row.name}
+    return InjectionParts(
+        injection=inj,
+        entities=entities,
+        rules=[(i.payload["key"], i.payload["definition"]) for i in items if i.op == "add_rule"],
+        profiles={i.payload["entity"]: {"authority": list(i.payload.get("authority") or []),
+                                        "role": i.payload.get("role") or ""}
+                  for i in items if i.op == "set_profile"},
+        facts=[i.payload for i in items if i.op == "set_fact"],
+    )
+
+
+def _apply_structure(state: WorldState, parts: InjectionParts) -> None:
+    """Entities, rules and profiles. Fact values come from recorded state changes."""
+    for key, ent in parts.entities.items():
+        state.entities.setdefault(key, ent)
+    merged = dict(state.rule_defs)
+    merged.update(dict(parts.rules))  # same key replaces the seed rule in this branch
+    state.rule_defs = list(merged.items())
+    state.profiles.update(parts.profiles)
+
+
+def last_round(session: Session, simulation_id: str) -> int:
+    return session.scalar(select(func.max(Event.round)).where(Event.simulation_id == simulation_id)) or 0
+
+
+def state_at(session: Session, sim: Simulation, round_: int) -> WorldState:
+    """Rebuild a run's world (truth and knowledge) after `round_`, from its recorded log.
+
+    Nothing is re-simulated: the state is the seed (or the parent's state at the fork)
+    plus every recorded state change and knowledge update up to that round.
+    """
+    if sim.parent_id:
+        parent = session.get(Simulation, sim.parent_id)
+        state = state_at(session, parent, sim.fork_round or 0)
+    else:
+        state = load_world(session, sim.version_id)
+    if sim.injection_id and round_ > (sim.fork_round or 0):
+        _apply_structure(state, _injection_parts(session, sim.injection_id, sim.version_id))
+
+    keys = {v["id"]: k for k, v in state.entities.items()}
+    changes = session.execute(
+        select(StateChange).join(Event, StateChange.event_id == Event.id)
+        .where(StateChange.simulation_id == sim.id, StateChange.round <= round_).order_by(Event.seq)
+    ).scalars()
+    for sc in changes:
+        state.base[(keys[sc.entity_id], sc.attribute)] = sc.new_value
+    updates = session.execute(
+        select(KnowledgeUpdate).join(Event, KnowledgeUpdate.event_id == Event.id)
+        .where(KnowledgeUpdate.simulation_id == sim.id, KnowledgeUpdate.round <= round_).order_by(Event.seq)
+    ).scalars()
+    for ku in updates:
+        state.knowledge.setdefault(keys[ku.agent_entity_id], {})[
+            (keys[ku.subject_entity_id], ku.attribute)] = (ku.value, ku.kind)
+    state.rederive()
+    return state
+
+
+def _record_knowledge(log: "_Log", sink: KnowledgeSink, round_: int, agent: str, subject: str,
+                      attr: str, value: Any, kind: KnowledgeKind, provenance: Provenance,
+                      caused_by: Optional[str]) -> None:
+    state = log.state
+    prev, prev_kind = state.belief(agent, subject, attr)
+    state.knowledge.setdefault(agent, {})[(subject, attr)] = (value, kind)
+    if prev_kind is not None and prev == value:
+        return
+    ev = log.add(round_, "knowledge_update", provenance, actor=agent,
+                 payload={"subject": subject, "attribute": attr, "old_belief": prev,
+                          "new": value, "kind": kind.value},
+                 caused_by_event_id=caused_by)
+    log.session.add(KnowledgeUpdate(simulation_id=log.sim.id, event_id=ev.id, round=round_,
+                                    agent_entity_id=state.entities[agent]["id"],
+                                    subject_entity_id=state.entities[subject]["id"],
+                                    attribute=attr, value=value, kind=kind))
+    sink.publish(log.sim.id, agent, subject, attr, value, kind.value, round_)
+
+
+def _record_change(log: "_Log", round_: int, entity: str, attr: str, new: Any,
+                   provenance: Provenance, caused_by: Optional[str], actor: Optional[str] = None) -> None:
+    state = log.state
+    old = state.base.get((entity, attr))
+    state.base[(entity, attr)] = new
+    ev = log.add(round_, "state_change", provenance, actor=actor,
+                 payload={"entity": entity, "attribute": attr, "old": old, "new": new},
+                 caused_by_event_id=caused_by)
+    log.session.add(StateChange(simulation_id=log.sim.id, event_id=ev.id, round=round_,
+                                entity_id=state.entities[entity]["id"], attribute=attr,
+                                old_value=old, new_value=new))
+
+
+def _apply_injection(log: "_Log", sink: KnowledgeSink, parts: InjectionParts, round_: int) -> None:
+    state = log.state
+    inj = parts.injection
+    head = log.add(round_, "injection", Provenance.X0,
+                   payload={"injection": inj.id, "label": inj.label,
+                            "new_entities": sorted(parts.entities), "fact_changes": len(parts.facts),
+                            "rules": [k for k, _ in parts.rules], "profiles": sorted(parts.profiles)},
+                   reason=f"Injected: {inj.label}")
+    before = dict(state.truth)
+    old_rules = dict(state.rule_defs)
+    for key in sorted(parts.entities):
+        if key not in state.entities:
+            log.add(round_, "entity_added", Provenance.X0,
+                    payload={"entity": key, **parts.entities[key]}, caused_by_event_id=head.id)
+    for key, _ in parts.rules:
+        log.add(round_, "rule_set", Provenance.X0,
+                payload={"rule": key, "replaces_seed_rule": key in old_rules}, caused_by_event_id=head.id)
+    for key, prof in sorted(parts.profiles.items()):
+        log.add(round_, "profile_set", Provenance.X0,
+                payload={"entity": key, "authority": prof["authority"]}, caused_by_event_id=head.id)
+    _apply_structure(state, parts)
+    for f in parts.facts:
+        _record_change(log, round_, f["entity"], f["attribute"], f.get("value"), Provenance.X0, head.id)
+    state.rederive()
+    _log_derivations(log, round_, before, head.id)
+    # Only the actors the briefing names learn the news now. Everyone else keeps their view.
+    for f in parts.facts:
+        for agent in f.get("informed") or []:
+            _record_knowledge(log, sink, round_, agent, f["entity"], f["attribute"], f.get("value"),
+                              KnowledgeKind.KNOWS, Provenance.X0, head.id)
+
+
 def run_simulation(
     session: Session,
-    version_id: str,
+    version_id: Optional[str],
     actions: list[ProposedAction | dict],
     *,
     name: str = "Scripted run",
     seed: int = 0,
     sink: Optional[KnowledgeSink] = None,
+    parent_id: Optional[str] = None,
+    fork_round: Optional[int] = None,
+    injection_id: Optional[str] = None,
 ) -> Simulation:
+    """Run a script from the seed world, or continue a parent run from `fork_round`.
+
+    A continuation never changes its parent. Several continuations of one parent are
+    branches: for example, one with an escalation injection and one with de-escalation.
+    """
     sink = sink or NullSink()
-    state = load_world(session, version_id)
+    parent: Optional[Simulation] = None
+    if parent_id:
+        parent = session.get(Simulation, parent_id)
+        if parent is None:
+            raise EngineError(f"Parent simulation not found: {parent_id}")
+        if parent.status != "completed":
+            raise EngineError("The parent run is not completed")
+        version_id = parent.version_id
+        parent_last = last_round(session, parent.id)
+        fork_round = parent_last if fork_round is None else int(fork_round)
+        if not 0 <= fork_round <= parent_last:
+            raise EngineError(f"fork_round must be between 0 and {parent_last}")
+        state = state_at(session, parent, fork_round)
+    else:
+        if injection_id:
+            raise EngineError("An injection applies to a running world: continue a run to inject")
+        if version_id is None:
+            raise EngineError("version_id is required")
+        fork_round = None
+        state = load_world(session, version_id)
+
+    parts = _injection_parts(session, injection_id, version_id) if injection_id else None
     parsed = [a if isinstance(a, ProposedAction) else ProposedAction(**a) for a in actions]
     parsed.sort(key=lambda a: a.round)  # stable: keeps script order within a round
+    start = (fork_round or 0) + 1
+    early = [a.round for a in parsed if a.round < start]
+    if early:
+        raise EngineError(f"Actions must start at round {start} or later (got round {min(early)})")
 
-    sim = Simulation(
-        version_id=version_id,
-        name=name,
-        seed=seed,
-        status="running",
-        run_config={
-            "engine_version": ENGINE_VERSION,
-            "rules_hash": rules_mod.rules_hash(state.rule_defs),
-            "seed": seed,
-            "script": [a.model_dump() for a in parsed],
-        },
-    )
+    sim = Simulation(version_id=version_id, name=name, seed=seed, status="running",
+                     parent_id=parent.id if parent else None, fork_round=fork_round,
+                     injection_id=injection_id)
     session.add(sim)
     session.flush()
     log = _Log(session, sim, state)
 
-    # Round 0: record F1 facts derived from the seed world.
-    _log_derivations(log, 0, {}, None)
+    if parent:
+        log.add(fork_round, "fork", Provenance.S0,
+                payload={"parent": parent.id, "parent_name": parent.name, "fork_round": fork_round},
+                reason=f"Continues '{parent.name}' after round {fork_round}")
+    else:
+        _log_derivations(log, 0, {}, None)  # F1 facts derived from the seed world
+    if parts:
+        _apply_injection(log, sink, parts, start)
+
+    sim.run_config = {
+        "engine_version": ENGINE_VERSION,
+        "rules_hash": rules_mod.rules_hash(state.rule_defs),
+        "seed": seed,
+        "parent_id": sim.parent_id,
+        "fork_round": fork_round,
+        "injection_id": injection_id,
+        "script": [a.model_dump() for a in parsed],
+    }
 
     for a in parsed:
         # What the actor believed about the target when deciding (A1).
@@ -382,31 +577,12 @@ def run_simulation(
         if outcome.valid and outcome.changes:
             before = dict(state.truth)
             for entity, attr, new in outcome.changes:
-                old = state.base.get((entity, attr))
-                state.base[(entity, attr)] = new
-                sc_ev = log.add(a.round, "state_change", Provenance.S0, actor=a.actor,
-                                payload={"entity": entity, "attribute": attr, "old": old, "new": new},
-                                caused_by_event_id=val_ev.id)
-                session.add(StateChange(simulation_id=sim.id, event_id=sc_ev.id, round=a.round,
-                                        entity_id=state.entities[entity]["id"], attribute=attr,
-                                        old_value=old, new_value=new))
+                _record_change(log, a.round, entity, attr, new, Provenance.S0, val_ev.id, actor=a.actor)
             state.rederive()
             _log_derivations(log, a.round, before, val_ev.id)
 
         for agent, subject, attr, value, kind in outcome.learned:
-            prev, prev_kind = state.belief(agent, subject, attr)
-            state.knowledge.setdefault(agent, {})[(subject, attr)] = (value, kind)
-            if prev_kind is not None and prev == value:
-                continue
-            ku_ev = log.add(a.round, "knowledge_update", Provenance.S0, actor=agent,
-                            payload={"subject": subject, "attribute": attr,
-                                     "old_belief": prev, "new": value, "kind": kind.value},
-                            caused_by_event_id=val_ev.id)
-            session.add(KnowledgeUpdate(simulation_id=sim.id, event_id=ku_ev.id, round=a.round,
-                                        agent_entity_id=state.entities[agent]["id"],
-                                        subject_entity_id=state.entities[subject]["id"],
-                                        attribute=attr, value=value, kind=kind))
-            sink.publish(sim.id, agent, subject, attr, value, kind.value, a.round)
+            _record_knowledge(log, sink, a.round, agent, subject, attr, value, kind, Provenance.S0, val_ev.id)
 
     sim.status = "completed"
     sim.run_config = {**copy.deepcopy(sim.run_config), "final_truth": _truth_snapshot(state)}
@@ -419,11 +595,12 @@ def _truth_snapshot(state: WorldState) -> dict[str, Any]:
 
 
 def replay(session: Session, simulation_id: str, *, sink: Optional[KnowledgeSink] = None) -> Simulation:
-    """Re-run a recorded script on the same approved version. Deterministic by design."""
+    """Re-run a recorded script (and, for a continuation, its fork and injection). Deterministic."""
     orig = session.get(Simulation, simulation_id)
     if orig is None:
         raise EngineError(f"Simulation not found: {simulation_id}")
     return run_simulation(
         session, orig.version_id, orig.run_config.get("script", []),
         name=f"Replay of {orig.name}", seed=orig.seed, sink=sink,
+        parent_id=orig.parent_id, fork_round=orig.fork_round, injection_id=orig.injection_id,
     )

@@ -35,6 +35,8 @@ from .models import (
     Event,
     Fact,
     InitialKnowledge,
+    Injection,
+    InjectionItem,
     KnowledgeKind,
     Origin,
     Provenance,
@@ -151,7 +153,8 @@ def import_world(
                     source_document_id=document.id if document else None,
                     source_quote=q, quote_verified=quote_found(q, source_text))
 
-    existing = {e.key: e for e in session.scalars(select(Entity).where(Entity.version_id == version_id))}
+    existing = {e.key: e for e in session.scalars(select(Entity).where(
+        Entity.version_id == version_id, Entity.injection_id.is_(None)))}
     counts: dict[str, int] = {k: 0 for k in REVIEWABLE}
     counts["skipped_duplicates"] = 0
 
@@ -337,7 +340,8 @@ def approve_version(session: Session, version_id: str) -> ScenarioVersion:
         raise StoreError(f"{pending} rows are still proposed. Approve or reject them first.")
 
     approved_ids = set(session.scalars(select(Entity.id).where(
-        Entity.version_id == version_id, Entity.review_status == ReviewStatus.APPROVED)))
+        Entity.version_id == version_id, Entity.review_status == ReviewStatus.APPROVED,
+        Entity.injection_id.is_(None))))
     dangling = []
     for model, cols in ((Fact, ["entity_id"]), (Relationship, ["source_id", "target_id"]),
                         (AgentProfile, ["entity_id"]),
@@ -352,7 +356,8 @@ def approve_version(session: Session, version_id: str) -> ScenarioVersion:
     # Run the approved rules once over the approved facts. Collisions (a rule that
     # would overwrite a seed fact) and non-converging rules must fail here, not mid-run.
     ents = {e.id: e for e in session.scalars(select(Entity).where(
-        Entity.version_id == version_id, Entity.review_status == ReviewStatus.APPROVED))}
+        Entity.version_id == version_id, Entity.review_status == ReviewStatus.APPROVED,
+        Entity.injection_id.is_(None)))}
     facts = {(ents[f.entity_id].key, f.attribute): f.value
              for f in session.scalars(select(Fact).where(
                  Fact.version_id == version_id, Fact.review_status == ReviewStatus.APPROVED))}
@@ -392,8 +397,10 @@ def new_version_from(session: Session, version_id: str, note: str | None = None)
     fk_cols = {"entity_id", "source_id", "target_id", "agent_entity_id", "subject_entity_id"}
     for table in ("entities", "facts", "relationships", "rules", "profiles", "knowledge"):
         model = REVIEWABLE[table]
-        for row in session.scalars(select(model).where(
-                model.version_id == src.id, model.review_status != ReviewStatus.REJECTED)):
+        q = select(model).where(model.version_id == src.id, model.review_status != ReviewStatus.REJECTED)
+        if model is Entity:
+            q = q.where(Entity.injection_id.is_(None))  # injections stay with the old version
+        for row in session.scalars(q):
             data = {c.name: getattr(row, c.name) for c in model.__table__.columns if c.name not in skip_cols}
             refs = fk_cols & data.keys()
             if any(data[c] not in ent_map for c in refs):
@@ -430,7 +437,7 @@ def _ser(row: Any) -> dict[str, Any]:
 def version_payload(session: Session, version_id: str) -> dict[str, Any]:
     v = get_version(session, version_id)
     ents = session.scalars(select(Entity).where(Entity.version_id == version_id)).all()
-    keys = {e.id: e.key for e in ents}
+    keys = {e.id: e.key for e in ents}  # includes injected entities, for labels
     data: dict[str, Any] = {
         "version": _ser(v),
         "scenario": _ser(v.scenario),
@@ -442,15 +449,27 @@ def version_payload(session: Session, version_id: str) -> dict[str, Any]:
     }
     for table, model in REVIEWABLE.items():
         rows = []
-        for r in session.scalars(select(model).where(model.version_id == version_id)):
+        q = select(model).where(model.version_id == version_id)
+        if model is Entity:
+            q = q.where(Entity.injection_id.is_(None))
+        for r in session.scalars(q):
             item = _ser(r)
             for col in ("entity_id", "source_id", "target_id", "agent_entity_id", "subject_entity_id"):
                 if col in item:
                     item[col.replace("_id", "_key")] = keys.get(item[col])
             rows.append(item)
         data[table] = sorted(rows, key=lambda x: (x.get("entity_key") or x.get("key") or x.get("source_key") or x.get("agent_key") or "", x.get("attribute") or x.get("type") or ""))
+    data["injections"] = [
+        _ser(i) | {"redaction_map": None, "redacted_text": None,
+                   "items": len(i_items := session.scalars(select(InjectionItem).where(
+                       InjectionItem.injection_id == i.id)).all()),
+                   "pending": sum(1 for it in i_items if it.review_status == ReviewStatus.PROPOSED)}
+        for i in session.scalars(select(Injection).where(Injection.version_id == version_id)
+                                 .order_by(Injection.created_at))
+    ]
     data["simulations"] = [
         _ser(s) | {"run_config": {k: s.run_config.get(k) for k in ("engine_version", "rules_hash", "seed")}}
+        | {"injection_label": s.injection_id and session.get(Injection, s.injection_id).label}
         for s in session.scalars(select(Simulation).where(Simulation.version_id == version_id)
                                  .order_by(Simulation.created_at))
     ]

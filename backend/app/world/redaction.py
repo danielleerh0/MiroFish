@@ -50,8 +50,24 @@ def _label(raw: str) -> str:
     return lab or "TERM"
 
 
-def redact(text: str, terms: Iterable[Term | dict[str, str] | str] = (), auto: bool = True) -> RedactionResult:
+_PH_PARTS = re.compile(r"^\[([A-Z0-9_]+)_(\d+)\]$")
+
+
+def redact(
+    text: str,
+    terms: Iterable[Term | dict[str, str] | str] = (),
+    auto: bool = True,
+    base_mapping: dict[str, str] | None = None,
+) -> RedactionResult:
+    """Redact text. base_mapping (placeholder -> original) carries placeholders from earlier
+    documents in the same scenario: their terms are redacted again here with the same
+    placeholders, so [ORG_1] keeps one meaning across the seed and every injection."""
     norm_terms: list[Term] = []
+    base_mapping = dict(base_mapping or {})
+    for ph, original in base_mapping.items():
+        m = _PH_PARTS.match(ph)
+        if m:
+            norm_terms.append(Term(original, m.group(1)))
     for t in terms:
         if isinstance(t, str):
             t = Term(t)
@@ -60,9 +76,13 @@ def redact(text: str, terms: Iterable[Term | dict[str, str] | str] = (), auto: b
         if t.text and t.text.strip():
             norm_terms.append(Term(t.text.strip(), _label(t.label)))
 
-    mapping: dict[str, str] = {}
-    by_original: dict[str, str] = {}
+    mapping: dict[str, str] = dict(base_mapping)
+    by_original: dict[str, str] = {v.lower(): k for k, v in base_mapping.items()}
     counters: dict[str, int] = {}
+    for ph in base_mapping:
+        m = _PH_PARTS.match(ph)
+        if m:
+            counters[m.group(1)] = max(counters.get(m.group(1), 0), int(m.group(2)))
 
     def placeholder(original: str, label: str) -> str:
         key = original.lower()

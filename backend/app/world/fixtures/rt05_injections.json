@@ -1,0 +1,44 @@
+{
+  "escalation": {
+    "label": "Escalation: dock fault and generator failure",
+    "briefing": "rt05_update_escalation.md",
+    "delta": {
+      "new_entities": [
+        {"key": "northwind", "kind": "organisation", "name": "Northwind Cold Chain", "source_quote": "Northwind Cold Chain offered refrigerated truck NW-03"},
+        {"key": "nw-03", "kind": "vehicle", "name": "NW-03", "source_quote": "NW-03 carries 18 pallets and is unassigned."}
+      ],
+      "fact_changes": [
+        {"entity": "dock-1", "attribute": "throughput_pallets_per_hour", "value": 25, "unit": "pallets/hour", "informed": ["mla"], "source_quote": "Dock 1 now handles 25 pallets per hour."},
+        {"entity": "medical-inventory", "attribute": "cold_hold_limit_hours", "value": 4, "unit": "hours", "informed": [], "source_quote": "the medical stock now has a cold-hold limit of 4 hours."},
+        {"entity": "northwind", "attribute": "gdp_certified", "value": true, "source_quote": "Northwind's Good Distribution Practice certification is valid."},
+        {"entity": "nw-03", "attribute": "capacity_pallets", "value": 18, "unit": "pallets", "source_quote": "NW-03 carries 18 pallets and is unassigned."},
+        {"entity": "nw-03", "attribute": "refrigerated", "value": true, "source_quote": "Northwind Cold Chain offered refrigerated truck NW-03"},
+        {"entity": "nw-03", "attribute": "operator", "value": "northwind", "source_quote": "Northwind Cold Chain offered refrigerated truck NW-03"},
+        {"entity": "nw-03", "attribute": "committed_to", "value": null, "informed": ["mla"], "source_quote": "NW-03 carries 18 pallets and is unassigned."},
+        {"entity": "nw-03", "attribute": "assigned_to", "value": null, "source_quote": "NW-03 carries 18 pallets and is unassigned."}
+      ],
+      "profiles": [
+        {"entity": "northwind", "role": "Refrigerated carrier offering spare capacity", "authority": ["RELEASE_ASSET"], "source_quote": "Northwind Cold Chain offered refrigerated truck NW-03 to the Medical Logistics Authority."}
+      ]
+    }
+  },
+  "deescalation": {
+    "label": "De-escalation: power restored, Quayline recertified",
+    "briefing": "rt05_update_deescalation.md",
+    "delta": {
+      "fact_changes": [
+        {"entity": "medical-inventory", "attribute": "pallets", "value": 120, "unit": "pallets", "informed": ["mla"], "source_quote": "Only 120 pallets of medical inventory still need relocation."},
+        {"entity": "quayline", "attribute": "gdp_certified", "value": true, "informed": ["greenmart", "mla"], "source_quote": "Quayline renewed its Good Distribution Practice certification this morning."}
+      ]
+    }
+  },
+  "scripts": {
+    "escalation": [
+      {"round": 2, "actor": "mla", "type": "REQUEST_ASSET", "params": {"asset": "nw-03", "purpose": "medical"}, "rationale": "Northwind offered NW-03"},
+      {"round": 2, "actor": "mla", "type": "REQUEST_ASSET", "params": {"asset": "ql-12", "purpose": "medical"}, "rationale": "More capacity needed after the dock slowdown"}
+    ],
+    "deescalation": [
+      {"round": 2, "actor": "mla", "type": "REQUEST_ASSET", "params": {"asset": "ql-12", "purpose": "medical"}, "rationale": "Quayline is recertified"}
+    ]
+  }
+}

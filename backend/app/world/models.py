@@ -53,6 +53,7 @@ class Provenance(str, enum.Enum):
     I0 = "I0"  # Analyst inference
     P0 = "P0"  # Scenario projection
     U0 = "U0"  # Uncertainty
+    X0 = "X0"  # Exogenous shock: change injected from outside the simulation
 
 
 class ReviewStatus(str, enum.Enum):
@@ -171,6 +172,9 @@ class Entity(_Reviewed, Base):
     kind: Mapped[EntityKind] = mapped_column(Enum(EntityKind, native_enum=False, length=20))
     name: Mapped[str] = mapped_column(String(200))
     description: Mapped[Optional[str]] = mapped_column(Text)
+    # Set when an injection introduced the entity. Such entities exist only in runs that
+    # apply that injection; the frozen seed world never includes them.
+    injection_id: Mapped[Optional[str]] = mapped_column(ForeignKey("injections.id"), index=True)
 
 
 class AgentProfile(_Reviewed, Base):
@@ -250,11 +254,58 @@ class InitialKnowledge(_Reviewed, Base):
 # ---------------------------------------------------------------------------
 
 
+class Injection(Base):
+    """New information introduced into a running world (escalation, de-escalation).
+
+    An injection belongs to a scenario version and is reusable: the same document can be
+    applied to several runs or branches. It never edits the frozen seed world.
+    """
+
+    __tablename__ = "injections"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    version_id: Mapped[str] = mapped_column(ForeignKey("scenario_versions.id"), index=True)
+    label: Mapped[str] = mapped_column(String(200))
+    filename: Mapped[Optional[str]] = mapped_column(String(300))
+    sha256: Mapped[Optional[str]] = mapped_column(String(64))
+    redacted_text: Mapped[str] = mapped_column(Text, default="")
+    redaction_map: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(16), default="draft")  # draft | ready
+    created_at: Mapped[datetime] = _ts()
+
+
+class InjectionItem(Base):
+    """One change carried by an injection. Reviewed like seed rows before use.
+
+    op: add_entity | set_fact | add_rule | set_profile
+    """
+
+    __tablename__ = "injection_items"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    injection_id: Mapped[str] = mapped_column(ForeignKey("injections.id"), index=True)
+    seq: Mapped[int] = mapped_column(Integer)
+    op: Mapped[str] = mapped_column(String(20))
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON)
+    review_status: Mapped[ReviewStatus] = mapped_column(
+        Enum(ReviewStatus, native_enum=False, length=16), default=ReviewStatus.PROPOSED
+    )
+    origin: Mapped[Origin] = mapped_column(Enum(Origin, native_enum=False, length=16))
+    source_quote: Mapped[Optional[str]] = mapped_column(Text)
+    quote_verified: Mapped[Optional[bool]] = mapped_column(Boolean)
+    auto_accepted: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
 class Simulation(Base):
     __tablename__ = "simulations"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     version_id: Mapped[str] = mapped_column(ForeignKey("scenario_versions.id"), index=True)
+    # A continuation starts from its parent's state after fork_round, then applies
+    # injection_id (if any) before its first round. A root run has no parent.
+    parent_id: Mapped[Optional[str]] = mapped_column(ForeignKey("simulations.id"), index=True)
+    fork_round: Mapped[Optional[int]] = mapped_column(Integer)
+    injection_id: Mapped[Optional[str]] = mapped_column(ForeignKey("injections.id"))
     name: Mapped[str] = mapped_column(String(200))
     seed: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(20), default="created")

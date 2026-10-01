@@ -269,3 +269,109 @@ def replay(simulation_id: str):
     with session_scope() as s:
         sim = engine.replay(s, simulation_id)
         return _ok(store.simulation_payload(s, sim.id), 201)
+
+
+# ---------------------------------------------------------------------------
+# Injections and run continuation
+# ---------------------------------------------------------------------------
+
+from ..world import injection as inj_mod  # noqa: E402
+
+
+@world_bp.route("/versions/<version_id>/injections", methods=["POST"])
+@api
+def create_injection(version_id: str):
+    name, text = _read_upload()
+    label = (request.form.get("label") if request.files else _body().get("label")) or ""
+    if not text.strip():
+        return _fail("Briefing text is empty")
+    with session_scope() as s:
+        inj = inj_mod.create_injection(s, version_id, label, text, filename=name, terms=_terms())
+        return _ok(inj_mod.injection_payload(s, inj.id), 201)
+
+
+@world_bp.route("/injections/<injection_id>", methods=["GET"])
+@api
+def get_injection(injection_id: str):
+    with session_scope() as s:
+        return _ok(inj_mod.injection_payload(s, injection_id))
+
+
+@world_bp.route("/injections/<injection_id>/draft", methods=["POST"])
+@api
+def draft_injection(injection_id: str):
+    auto = _body().get("auto_accept", True) is not False
+    with session_scope() as s:
+        result = inj_mod.draft_with_llm(s, injection_id, auto_accept=auto)
+        return _ok(result | {"injection": inj_mod.injection_payload(s, injection_id)})
+
+
+@world_bp.route("/injections/<injection_id>/import", methods=["POST"])
+@api
+def import_injection(injection_id: str):
+    b = _body()
+    if not isinstance(b.get("spec"), dict):
+        return _fail("spec (object) is required")
+    with session_scope() as s:
+        result = inj_mod.import_delta(s, injection_id, b["spec"], origin=Origin.HUMAN,
+                                      auto_accept=b.get("auto_accept", True) is not False)
+        return _ok(result | {"injection": inj_mod.injection_payload(s, injection_id)})
+
+
+@world_bp.route("/injection-items/<item_id>", methods=["PATCH"])
+@api
+def review_injection_item(item_id: str):
+    b = _body()
+    with session_scope() as s:
+        item = inj_mod.review_item(s, item_id, b.get("decision", "edit"), b.get("edits"))
+        return _ok({"id": item.id, "review_status": item.review_status.value})
+
+
+@world_bp.route("/injections/<injection_id>/finalize", methods=["POST"])
+@api
+def finalize_injection(injection_id: str):
+    with session_scope() as s:
+        inj_mod.finalize(s, injection_id)
+        return _ok(inj_mod.injection_payload(s, injection_id))
+
+
+@world_bp.route("/simulations/<simulation_id>/continue", methods=["POST"])
+@api
+def continue_run(simulation_id: str):
+    """Branch a run after `fork_round`, optionally applying a finalized injection first."""
+    b = _body()
+    actions = b.get("actions") or []
+    if not isinstance(actions, list):
+        return _fail("actions must be a list")
+    with session_scope() as s:
+        sim = engine.run_simulation(
+            s, None, actions, name=b.get("name") or "Continuation", seed=int(b.get("seed") or 0),
+            parent_id=simulation_id, fork_round=b.get("fork_round"), injection_id=b.get("injection_id") or None,
+        )
+        return _ok(store.simulation_payload(s, sim.id), 201)
+
+
+def load_rt05_injections(session, version_id: str) -> dict[str, Any]:
+    """Create the two synthetic RT-05 injections, approved and finalized."""
+    with open(os.path.join(FIXTURE_DIR, "rt05_injections.json"), encoding="utf-8") as f:
+        spec = json.load(f)
+    out: dict[str, Any] = {"scripts": spec["scripts"], "injections": {}}
+    for key in ("escalation", "deescalation"):
+        item = spec[key]
+        with open(os.path.join(FIXTURE_DIR, item["briefing"]), encoding="utf-8") as f:
+            text = f.read()
+        inj = inj_mod.create_injection(session, version_id, item["label"], text, filename=item["briefing"])
+        inj_mod.import_delta(session, inj.id, item["delta"], origin=Origin.FIXTURE, approve_all=True)
+        inj_mod.finalize(session, inj.id)
+        out["injections"][key] = inj.id
+    return out
+
+
+@world_bp.route("/fixtures/rt05/injections", methods=["POST"])
+@api
+def fixture_rt05_injections():
+    vid = _body().get("version_id")
+    if not vid:
+        return _fail("version_id is required")
+    with session_scope() as s:
+        return _ok(load_rt05_injections(s, vid), 201)
