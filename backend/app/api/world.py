@@ -14,6 +14,7 @@ from typing import Any, Callable
 
 from flask import jsonify, request
 from pydantic import ValidationError
+from sqlalchemy.exc import IntegrityError
 
 from . import world_bp
 from ..utils.logger import get_logger
@@ -43,6 +44,8 @@ def api(fn: Callable) -> Callable:
             return fn(*args, **kwargs)
         except (store.StoreError, engine.EngineError, RuleError, ValueError) as exc:
             return _fail(str(exc), 400)
+        except IntegrityError:
+            return _fail("The change conflicts with an existing row (duplicate key)", 409)
         except ValidationError as exc:
             return _fail(f"Invalid action: {exc.errors()[0].get('msg')}", 400)
         except Exception:  # pragma: no cover - logged, generic message to client

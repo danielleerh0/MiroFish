@@ -52,7 +52,8 @@ Mutable state lives in facts, for example `rt-05.committed_to = "greenmart"`. Re
 
 - Rules run to a fixpoint (at most 10 passes), in key order.
 - A rule cannot overwrite a seed fact.
-- A rule that reads a missing fact is skipped, and the skip is logged as U0. The engine does not guess.
+- A rule that reads a missing fact, or fails on the data (a null comparison, a wrong type, division by zero), is skipped. The skip is logged as U0. The engine does not guess.
+- Version approval runs the approved rules over the approved facts once. A conflict blocks approval and does not fail later, mid-run.
 
 ## Action contract (the P1 OASIS mapping target)
 
@@ -64,6 +65,7 @@ Mutable state lives in facts, for example `rt-05.committed_to = "greenmart"`. Re
 
 P0 action types:
 
+- Authority is default-deny. An actor with no approved agent profile cannot act.
 - `REQUEST_ASSET`: checks the actor's authority, that the asset exists, medical eligibility (when `purpose` is `medical`), and that no other party holds a commitment or assignment.
 - `RELEASE_ASSET`: the actor must hold the commitment.
 
@@ -100,7 +102,8 @@ UI: `/world` (linked from the home page).
 
 ## Known limits
 
-- Redaction catches only the terms you list, plus emails, Singapore phone numbers and NRIC/FIN numbers. Check the preview before extraction.
+- Redaction catches only the terms you list, plus emails, Singapore phone numbers and NRIC/FIN numbers (any case). An 8-digit number followed by a unit (pallets, kg, %, and so on) is treated as a quantity, not a phone number. Check the preview before extraction.
+- Re-running an import or extraction on the same version skips rows that already exist. It does not update them.
 - Actors are not notified of other actors' actions. In the RT-05 baseline, the Authority still believes Greenmart holds RT-05 when it succeeds in round 3. The log shows this. P1 needs a `NOTIFY`/channel mechanism.
 - Extraction is a single call capped at 60,000 characters. It does not chunk long briefings yet.
 - `quote_verified` confirms that the quote exists in the source. It does not confirm that the quote supports the value.

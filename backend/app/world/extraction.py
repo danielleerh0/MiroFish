@@ -87,9 +87,22 @@ def sanitise(raw: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     def ref_ok(v: Any) -> bool:
         return isinstance(v, str) and _slug(v) in keys
 
+    # Values that name an entity (operator, committed_to, ...) must hold the entity *key*,
+    # because rules and the engine compare keys. Match on key or on display name, while
+    # names are still placeholders, so restoring names later cannot break the reference.
+    by_name = {_slug(e.get("name") or ""): e["key"] for e in spec["entities"] if e.get("name")}
+
+    def as_ref(value: Any) -> Any:
+        if not isinstance(value, str) or not value.strip():
+            return value
+        k = _slug(value)
+        if k in keys:
+            return k
+        return by_name.get(k, value)
+
     for f in raw.get("facts") or []:
         if isinstance(f, dict) and ref_ok(f.get("entity")) and f.get("attribute"):
-            spec["facts"].append({**f, "entity": _slug(f["entity"])})
+            spec["facts"].append({**f, "entity": _slug(f["entity"]), "value": as_ref(f.get("value"))})
         else:
             issues.append(f"fact dropped (bad entity or attribute): {f!r:.100}")
     # One value per (entity, attribute): keep the first, report the rest.
@@ -122,7 +135,8 @@ def sanitise(raw: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
         if (isinstance(k, dict) and isinstance(k.get("agent"), str) and _slug(k["agent"]) in actor_keys
                 and ref_ok(k.get("subject")) and k.get("attribute")):
             kind = k.get("kind") if k.get("kind") in ("knows", "believes") else "believes"
-            spec["knowledge"].append({**k, "agent": _slug(k["agent"]), "subject": _slug(k["subject"]), "kind": kind})
+            spec["knowledge"].append({**k, "agent": _slug(k["agent"]), "subject": _slug(k["subject"]),
+                                      "kind": kind, "value": as_ref(k.get("value"))})
         else:
             issues.append(f"knowledge dropped: {k!r:.100}")
 

@@ -507,7 +507,7 @@ function describe(e) {
     case 'derivation':
       return `${p.entity}.${p.attribute} = ${fmt(p.value)} (rule ${p.rule}; inputs ${fmt(p.inputs)})`
     case 'derivation_skipped':
-      return `Rule ${p.rule} skipped: missing ${p.missing}`
+      return `Rule ${p.rule} skipped${p.binding ? ` for ${p.binding}` : ''}: ${e.reason}`
     case 'observation': {
       const b = Object.entries(p.beliefs || {}).map(([k, v]) =>
         `${k}=${fmt(v.value)} (${v.kind}${v.matches_truth ? '' : ', differs from truth'})`)

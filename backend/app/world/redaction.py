@@ -20,8 +20,14 @@ from typing import Any, Iterable
 
 AUTO_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("EMAIL", re.compile(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b")),
-    ("NRIC", re.compile(r"\b[STFGM]\d{7}[A-Z]\b")),
-    ("PHONE", re.compile(r"(?:\+65[\s-]?)?\b[689]\d{3}[\s-]?\d{4}\b")),
+    ("NRIC", re.compile(r"\b[STFGM]\d{7}[A-Z]\b", re.IGNORECASE)),
+    # Singapore numbers: 8 digits starting 6/8/9. Not when a unit follows, so that
+    # quantities such as "8000 0000 units" stay visible to the extractor.
+    ("PHONE", re.compile(
+        r"(?:\+65[\s-]?)?\b[689]\d{3}[\s-]?\d{4}\b"
+        r"(?!\s*(?:(?:pallets?|units?|kg|kilograms?|tonnes?|tons?|teus?|boxes|cartons?|cases?|"
+        r"litres?|liters?|m3|cbm|sgd|usd|hours?|hrs?|days?|km|trucks?|vehicles?)\b|%))",
+        re.IGNORECASE)),
 ]
 
 _LABEL_RE = re.compile(r"[^A-Z0-9]+")

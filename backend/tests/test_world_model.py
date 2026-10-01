@@ -334,3 +334,95 @@ def test_api_fixture_run_and_review(client):
 
     r = client.post(f"/api/world/versions/{vid}/simulations", json={"actions": [{"round": 0}]})
     assert r.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Regressions from the P0 review
+# ---------------------------------------------------------------------------
+
+
+def test_reference_values_keep_entity_keys_after_unredaction():
+    raw = {
+        "entities": [{"key": "[ORG_1]", "kind": "organisation", "name": "[ORG_1]"},
+                     {"key": "grocer", "kind": "organisation", "name": "[ORG_2]"},
+                     {"key": "rt-05", "kind": "vehicle", "name": "RT-05"}],
+        "facts": [{"entity": "rt-05", "attribute": "operator", "value": "[ORG_1]"},
+                  {"entity": "rt-05", "attribute": "committed_to", "value": "[ORG_2]"},
+                  {"entity": "rt-05", "attribute": "window", "value": "06:00-09:00"}],
+        "knowledge": [{"agent": "[ORG_1]", "subject": "rt-05", "attribute": "committed_to", "value": "[ORG_2]"}],
+    }
+    spec, _ = extraction.sanitise(raw)
+    spec = unredact(spec, {"[ORG_1]": "Tidewater Logistics", "[ORG_2]": "Greenmart"})
+    values = {f["attribute"]: f["value"] for f in spec["facts"]}
+    assert values == {"operator": "org-1", "committed_to": "grocer", "window": "06:00-09:00"}
+    assert spec["knowledge"][0]["value"] == "grocer"
+    assert {e["name"] for e in spec["entities"]} >= {"Tidewater Logistics", "Greenmart"}
+
+
+def test_reimport_skips_duplicates_instead_of_failing(dbsession):
+    from app.api.world import _fixture
+
+    spec = _fixture()[0]
+    v = store.create_scenario(dbsession, "dup")
+    first = store.import_world(dbsession, v.id, spec, origin=Origin.HUMAN)
+    second = store.import_world(dbsession, v.id, spec, origin=Origin.HUMAN)
+    assert first["facts"] == 16 and second["facts"] == 0
+    assert second["skipped_duplicates"] == sum(first[k] for k in store.REVIEWABLE)
+
+
+def test_new_version_from_draft_drops_rows_on_rejected_entities(dbsession):
+    vid = _load(dbsession, review=True)
+    rt05 = next(e for e in store.version_payload(dbsession, vid)["entities"] if e["key"] == "rt-05")
+    store.review_row(dbsession, "entities", rt05["id"], "reject")
+    v2 = store.new_version_from(dbsession, vid)
+    p2 = store.version_payload(dbsession, v2.id)
+    assert "rt-05" not in {e["key"] for e in p2["entities"]}
+    assert all(f["entity_key"] != "rt-05" for f in p2["facts"])
+    assert all("rt-05" not in (r["source_key"], r["target_key"]) for r in p2["relationships"])
+
+
+def test_rule_evaluation_errors_are_skips_not_crashes():
+    defs = [("div", {"when": {"op": "==", "left": 1, "right": 1},
+                     "then": [{"set": ["i", "h"], "value": {"div": [{"fact": ["i", "p"]}, {"fact": ["d", "r"]}]}}]}),
+            ("cmp", {"when": {"op": ">", "left": {"fact": ["i", "n"]}, "right": 6},
+                     "then": [{"set": ["i", "z"], "value": True}]})]
+    truth, trace = rules.derive({("d", "r"): 0, ("i", "p"): 5, ("i", "n"): None}, {}, defs)
+    assert ("i", "h") not in truth and ("i", "z") not in truth
+    errors = {s.rule_key: s.error for s in trace.skips}
+    assert "ZeroDivisionError" in errors["div"] and "TypeError" in errors["cmp"]
+
+
+def test_approval_rejects_rule_that_would_overwrite_seed_fact(dbsession):
+    vid = _load(dbsession, review=True)
+    store.import_world(dbsession, vid, {"facts": [
+        {"entity": "rt-05", "attribute": "medical_transport_eligible", "value": True}]}, origin=Origin.HUMAN)
+    payload = store.version_payload(dbsession, vid)
+    for table in store.REVIEWABLE:
+        for row in payload[table]:
+            store.review_row(dbsession, table, row["id"], "approve")
+    with pytest.raises(store.StoreError, match="Rules conflict with approved facts"):
+        store.approve_version(dbsession, vid)
+
+
+def test_edit_that_collides_is_a_clean_error(dbsession):
+    vid = _load(dbsession, review=True)
+    facts = store.version_payload(dbsession, vid)["facts"]
+    cap = next(f for f in facts if f["entity_key"] == "rt-05" and f["attribute"] == "capacity_pallets")
+    with pytest.raises(store.StoreError, match="conflicts"):
+        store.review_row(dbsession, "facts", cap["id"], "edit", {"attribute": "refrigerated"})
+    assert dbsession.get(Fact, cap["id"]).attribute == "capacity_pallets"
+    store.review_row(dbsession, "facts", cap["id"], "approve")  # session still usable
+
+
+def test_actor_without_profile_has_no_authority(dbsession):
+    vid = _load(dbsession)
+    sim = engine.run_simulation(dbsession, vid, [
+        {"round": 1, "actor": "linkhaul", "type": "REQUEST_ASSET", "params": {"asset": "ql-12"}}])
+    v = dbsession.scalars(select(Event).where(Event.simulation_id == sim.id, Event.kind == "validation")).one()
+    assert v.valid is False and "no approved agent profile" in v.reason
+
+
+def test_redaction_nric_any_case_and_quantities_kept():
+    res = redact("NRIC s1234567d, call 91234567. Stock 8000 0000 units, 90001234 %.")
+    assert "s1234567d" not in res.text and "91234567" not in res.text
+    assert "8000 0000 units" in res.text and "90001234 %" in res.text

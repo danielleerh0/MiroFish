@@ -19,7 +19,8 @@ EXPR:
                                           that yields a key (e.g. the vehicle's operator)
     {"add"|"sub"|"mul"|"div"|"min"|"max": [EXPR, EXPR]}
 
-If an expression reads a fact that does not exist, the rule does not fire for that
+If an expression reads a fact that does not exist, or evaluation fails on the data
+(null comparison, wrong type, division by zero), the rule does not fire for that
 binding. The skip is reported (not silently guessed), so gaps in the world model
 stay visible.
 """
@@ -80,7 +81,12 @@ class Derivation:
 class Skip:
     rule_key: str
     binding: Optional[str]
-    missing: str
+    missing: Optional[str] = None  # "entity.attribute" that does not exist
+    error: Optional[str] = None  # evaluation error (e.g. division by zero, null comparison)
+
+    @property
+    def reason(self) -> str:
+        return f"Missing fact {self.missing}" if self.missing else f"Evaluation error: {self.error}"
 
 
 @dataclass
@@ -212,7 +218,10 @@ def derive(
                         value = _eval_expr(eff["value"], ctx)
                         derived[(ent, attr)] = Derivation(key, ent, attr, value, dict(ctx.inputs))
                 except MissingFact as mf:
-                    skips.append(Skip(key, b, f"{mf.entity}.{mf.attribute}"))
+                    skips.append(Skip(key, b, missing=f"{mf.entity}.{mf.attribute}"))
+                except (ArithmeticError, TypeError) as exc:
+                    # Bad data (null, wrong type, zero divisor) must not crash a run.
+                    skips.append(Skip(key, b, error=f"{type(exc).__name__}: {exc}"))
         nxt = dict(base)
         nxt.update({k: v.value for k, v in derived.items()})
         if nxt == current:

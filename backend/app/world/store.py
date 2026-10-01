@@ -152,11 +152,32 @@ def import_world(
                     source_quote=q, quote_verified=quote_found(q, source_text))
 
     existing = {e.key: e for e in session.scalars(select(Entity).where(Entity.version_id == version_id))}
-    counts = {k: 0 for k in REVIEWABLE}
+    counts: dict[str, int] = {k: 0 for k in REVIEWABLE}
+    counts["skipped_duplicates"] = 0
+
+    # Natural keys already in this version. Re-running an import or extraction must
+    # not violate unique constraints; existing rows (and their review state) win.
+    def seen(model, *cols):
+        return {tuple(row) for row in session.execute(
+            select(*[getattr(model, c) for c in cols]).where(model.version_id == version_id))}
+
+    have_facts = seen(Fact, "entity_id", "attribute")
+    have_rels = seen(Relationship, "source_id", "target_id", "type")
+    have_rules = {k for (k,) in seen(Rule, "key")}
+    have_profiles = {k for (k,) in seen(AgentProfile, "entity_id")}
+    have_knowledge = seen(InitialKnowledge, "agent_entity_id", "subject_entity_id", "attribute")
+
+    def dup(natural_key, bucket) -> bool:
+        if natural_key in bucket:
+            counts["skipped_duplicates"] += 1
+            return True
+        bucket.add(natural_key)
+        return False
 
     for item in spec.get("entities", []):
         key = _slug(item["key"])
         if key in existing:
+            counts["skipped_duplicates"] += 1
             continue
         try:
             kind = EntityKind(item["kind"])
@@ -176,29 +197,39 @@ def import_world(
         return existing[k].id
 
     for item in spec.get("facts", []):
-        session.add(Fact(version_id=version_id, entity_id=ent_id(item["entity"], "fact"),
+        eid = ent_id(item["entity"], "fact")
+        if dup((eid, item["attribute"]), have_facts):
+            continue
+        session.add(Fact(version_id=version_id, entity_id=eid,
                          attribute=item["attribute"], value=item.get("value"),
                          unit=item.get("unit"), **common(item)))
         counts["facts"] += 1
 
     for item in spec.get("relationships", []):
-        session.add(Relationship(version_id=version_id,
-                                 source_id=ent_id(item["source"], "relationship"),
-                                 target_id=ent_id(item["target"], "relationship"),
+        src, tgt = ent_id(item["source"], "relationship"), ent_id(item["target"], "relationship")
+        if dup((src, tgt, item["type"]), have_rels):
+            continue
+        session.add(Relationship(version_id=version_id, source_id=src, target_id=tgt,
                                  type=item["type"], attributes=item.get("attributes") or {},
                                  **common(item)))
         counts["relationships"] += 1
 
     for item in spec.get("rules", []):
         rules_mod.validate_rule(item["definition"])
-        session.add(Rule(version_id=version_id, key=_slug(item["key"]),
+        rkey = _slug(item["key"])
+        if dup(rkey, have_rules):
+            continue
+        session.add(Rule(version_id=version_id, key=rkey,
                          description=item.get("description", ""),
                          definition=item["definition"], **common(item)))
         counts["rules"] += 1
 
     for item in spec.get("profiles", []):
+        eid = ent_id(item["entity"], "profile")
+        if dup(eid, have_profiles):
+            continue
         session.add(AgentProfile(
-            version_id=version_id, entity_id=ent_id(item["entity"], "profile"),
+            version_id=version_id, entity_id=eid,
             role=item.get("role", ""), objectives=item.get("objectives", []),
             incentives=item.get("incentives", []), authority=item.get("authority", []),
             constraints=item.get("constraints", []), risk_tolerance=item.get("risk_tolerance"),
@@ -207,9 +238,11 @@ def import_world(
         counts["profiles"] += 1
 
     for item in spec.get("knowledge", []):
+        aid, sid = ent_id(item["agent"], "knowledge"), ent_id(item["subject"], "knowledge")
+        if dup((aid, sid, item["attribute"]), have_knowledge):
+            continue
         session.add(InitialKnowledge(
-            version_id=version_id, agent_entity_id=ent_id(item["agent"], "knowledge"),
-            subject_entity_id=ent_id(item["subject"], "knowledge"),
+            version_id=version_id, agent_entity_id=aid, subject_entity_id=sid,
             attribute=item["attribute"], value=item.get("value"),
             kind=KnowledgeKind(item.get("kind", "believes")),
             **{**common(item), "provenance": Provenance.A1 if approve else Provenance.U0}))
@@ -253,6 +286,7 @@ def review_row(session: Session, table: str, row_id: str, decision: str,
             edits = {**edits, "kind": EntityKind(edits["kind"])}
         if table == "knowledge" and "kind" in edits:
             edits = {**edits, "kind": KnowledgeKind(edits["kind"])}
+        _check_unique_after_edit(session, table, row, edits)
         for k, v in edits.items():
             setattr(row, k, v)
         row.origin = Origin.HUMAN
@@ -266,6 +300,28 @@ def review_row(session: Session, table: str, row_id: str, decision: str,
         raise StoreError(f"Unknown decision '{decision}'")
     session.flush()
     return row
+
+
+_UNIQUE_ON_EDIT = {
+    "facts": ("entity_id", "attribute"),
+    "knowledge": ("agent_entity_id", "subject_entity_id", "attribute"),
+    "relationships": ("source_id", "target_id", "type"),
+}
+
+
+def _check_unique_after_edit(session: Session, table: str, row: Any, edits: dict[str, Any]) -> None:
+    """Reject an edit that would duplicate a natural key, before anything is flushed."""
+    cols = _UNIQUE_ON_EDIT.get(table)
+    if not cols or not (set(cols) & set(edits)):
+        return
+    model = REVIEWABLE[table]
+    target = {c: edits.get(c, getattr(row, c)) for c in cols}
+    with session.no_autoflush:
+        clash = session.scalar(select(model.id).where(
+            model.version_id == row.version_id, model.id != row.id,
+            *[getattr(model, c) == v for c, v in target.items()]))
+    if clash:
+        raise StoreError(f"Edit conflicts with an existing {table} row in this version")
 
 
 def approve_version(session: Session, version_id: str) -> ScenarioVersion:
@@ -292,6 +348,20 @@ def approve_version(session: Session, version_id: str) -> ScenarioVersion:
                 dangling.append(f"{model.__tablename__}:{row.id}")
     if dangling:
         raise StoreError(f"Approved rows point to rejected entities: {dangling[:5]}")
+
+    # Run the approved rules once over the approved facts. Collisions (a rule that
+    # would overwrite a seed fact) and non-converging rules must fail here, not mid-run.
+    ents = {e.id: e for e in session.scalars(select(Entity).where(
+        Entity.version_id == version_id, Entity.review_status == ReviewStatus.APPROVED))}
+    facts = {(ents[f.entity_id].key, f.attribute): f.value
+             for f in session.scalars(select(Fact).where(
+                 Fact.version_id == version_id, Fact.review_status == ReviewStatus.APPROVED))}
+    rule_defs = [(r.key, r.definition) for r in session.scalars(select(Rule).where(
+        Rule.version_id == version_id, Rule.review_status == ReviewStatus.APPROVED))]
+    try:
+        rules_mod.derive(facts, {e.key: e.kind.value for e in ents.values()}, rule_defs)
+    except rules_mod.RuleError as exc:
+        raise StoreError(f"Rules conflict with approved facts: {exc}") from exc
 
     version.status = VersionStatus.APPROVED
     version.approved_at = datetime.now(timezone.utc)
@@ -325,7 +395,10 @@ def new_version_from(session: Session, version_id: str, note: str | None = None)
         for row in session.scalars(select(model).where(
                 model.version_id == src.id, model.review_status != ReviewStatus.REJECTED)):
             data = {c.name: getattr(row, c.name) for c in model.__table__.columns if c.name not in skip_cols}
-            for c in fk_cols & data.keys():
+            refs = fk_cols & data.keys()
+            if any(data[c] not in ent_map for c in refs):
+                continue  # points at a rejected entity; it cannot be valid in the new version
+            for c in refs:
                 data[c] = ent_map[data[c]]
             if data.get("source_document_id"):
                 data["source_document_id"] = doc_map.get(data["source_document_id"])

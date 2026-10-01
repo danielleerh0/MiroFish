@@ -178,7 +178,10 @@ def _require_actor(state: WorldState, a: ProposedAction) -> Optional[str]:
     if ent["kind"] not in ACTOR_KINDS:
         return f"'{a.actor}' is a {ent['kind']} and cannot act"
     profile = state.profiles.get(a.actor)
-    if profile is not None and a.type not in profile["authority"]:
+    if profile is None:
+        # Default deny: authority must be stated and approved, never assumed.
+        return f"{ent['name']} has no approved agent profile, so no authority to {a.type}"
+    if a.type not in profile["authority"]:
         return f"{ent['name']} has no authority to {a.type}"
     return None
 
@@ -315,8 +318,9 @@ def _log_derivations(log: _Log, round_: int, before: dict, caused_by: Optional[s
     if round_ == 0:
         for s in log.state.derivation.skips:
             log.add(0, "derivation_skipped", Provenance.U0,
-                    payload={"rule": s.rule_key, "binding": s.binding, "missing": s.missing},
-                    reason=f"Missing fact {s.missing}")
+                    payload={"rule": s.rule_key, "binding": s.binding, "missing": s.missing,
+                             "error": s.error},
+                    reason=s.reason)
 
 
 def run_simulation(
